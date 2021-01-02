@@ -540,7 +540,7 @@ jobEventListener = do
   withDbConnection $ \monitorDbConn -> do
     void $ liftIO $ PGS.execute monitorDbConn ("LISTEN " <> pgEventName tname) ()
     forever $ do
-      log LevelDebug $ LogText "[LISTEN/NOFIFY] Event loop"
+      log LevelDebug $ LogText "[LISTEN/NOTIFY] Event loop"
       notif <- liftIO $ getNotification monitorDbConn
       concurrencyControlFn >>= \case
         False -> log LevelWarn $ LogText "Received job event, but ignoring it due to concurrency control"
