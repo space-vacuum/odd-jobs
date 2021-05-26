@@ -185,6 +185,7 @@ data Job = Job
   , jobPayload :: Aeson.Value
   , jobLastError :: Maybe Value
   , jobAttempts :: Int
+  , jobMaxRetries :: Maybe Int
   , jobLockedAt :: Maybe UTCTime
   , jobLockedBy :: Maybe JobRunnerName
   } deriving (Eq, Show, Generic)
@@ -224,6 +225,7 @@ instance FromRow Job where
     <*> field -- payload
     <*> field -- lastError
     <*> field -- attempts
+    <*> field -- retries
     <*> field -- lockedAt
     <*> field -- lockedBy
 
