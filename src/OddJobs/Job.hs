@@ -230,6 +230,7 @@ jobDbColumns =
   , "payload"
   , "last_error"
   , "attempts"
+  , "max_retries"
   , "locked_at"
   , "locked_by"
   ]
@@ -295,7 +296,7 @@ findJobByIdIO conn tname jid = PGS.query conn (findJobByIdQuery tname) (Only jid
 
 
 saveJobQuery :: TableName -> PGS.Query
-saveJobQuery tname = "UPDATE " <> tname <> " set run_at = ?, status = ?, payload = ?, last_error = ?, attempts = ?, locked_at = ?, locked_by = ? WHERE id = ? RETURNING " <> concatJobDbColumns
+saveJobQuery tname = "UPDATE " <> tname <> " set run_at = ?, status = ?, payload = ?, last_error = ?, attempts = ?, max_retries = ?, locked_at = ?, locked_by = ? WHERE id = ? RETURNING " <> concatJobDbColumns
 
 deleteJobQuery :: TableName -> PGS.Query
 deleteJobQuery tname = "DELETE FROM " <> tname <> " WHERE id = ?"
@@ -306,13 +307,14 @@ saveJob j = do
   withDbConnection $ \conn -> liftIO $ saveJobIO conn tname j
 
 saveJobIO :: Connection -> TableName -> Job -> IO Job
-saveJobIO conn tname Job{jobRunAt, jobStatus, jobPayload, jobLastError, jobAttempts, jobLockedBy, jobLockedAt, jobId} = do
+saveJobIO conn tname Job{jobRunAt, jobStatus, jobPayload, jobLastError, jobAttempts, jobMaxRetries, jobLockedBy, jobLockedAt, jobId} = do
   rs <- PGS.query conn (saveJobQuery tname)
         ( jobRunAt
         , jobStatus
         , jobPayload
         , jobLastError
         , jobAttempts
+        , jobMaxRetries
         , jobLockedAt
         , jobLockedBy
         , jobId
@@ -406,9 +408,9 @@ runJob jid = do
   where
     timeoutHandler job startTime (e :: TimeoutException) = retryOrFail (toException e) job startTime
     exceptionHandler job startTime (e :: SomeException) = retryOrFail (toException e) job startTime
-    retryOrFail e job@Job{jobAttempts} startTime = do
+    retryOrFail e job@Job{jobAttempts, jobMaxRetries} startTime = do
       endTime <- liftIO getCurrentTime
-      defaultMaxAttempts <- getDefaultMaxAttempts
+      defaultMaxAttempts <- maybe getDefaultMaxAttempts pure jobMaxRetries
       let runTime = diffUTCTime endTime startTime
           (newStatus, failureMode, logLevel) = if jobAttempts >= defaultMaxAttempts
                                                then ( Failed, FailPermanent, LevelError )
@@ -595,7 +597,7 @@ jobEventListener = do
 
 
 createJobQuery :: TableName -> PGS.Query
-createJobQuery tname = "INSERT INTO " <> tname <> "(run_at, status, payload, last_error, attempts, locked_at, locked_by) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING " <> concatJobDbColumns
+createJobQuery tname = "INSERT INTO " <> tname <> "(run_at, status, payload, last_error, attempts, max_retries, locked_at, locked_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING " <> concatJobDbColumns
 
 -- $createJobs
 --
@@ -612,10 +614,11 @@ createJob :: ToJSON p
           => Connection
           -> TableName
           -> p
+          -> Maybe Int
           -> IO Job
-createJob conn tname payload = do
+createJob conn tname payload maxRetries = do
   t <- getCurrentTime
-  scheduleJob conn tname payload t
+  scheduleJob conn tname payload t maxRetries
 
 -- | Create a job for execution at the given time.
 --
@@ -632,9 +635,10 @@ scheduleJob :: ToJSON p
             -> TableName    -- ^ DB-table which holds your jobs
             -> p            -- ^ Job payload
             -> UTCTime      -- ^ when should the job be executed
+            -> Maybe Int    -- ^ overrides the maximum number of retries for a job
             -> IO Job
-scheduleJob conn tname payload runAt = do
-  let args = ( runAt, Queued, toJSON payload, Nothing :: Maybe Value, 0 :: Int, Nothing :: Maybe Text, Nothing :: Maybe Text )
+scheduleJob conn tname payload runAt maxRetries = do
+  let args = ( runAt, Queued, toJSON payload, Nothing :: Maybe Value, 0 :: Int, maxRetries, Nothing :: Maybe Text, Nothing :: Maybe Text )
       queryFormatter = toS <$> (PGS.formatQuery conn (createJobQuery tname) args)
   rs <- PGS.query conn (createJobQuery tname) args
   case rs of
