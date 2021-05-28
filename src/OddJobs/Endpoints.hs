@@ -24,7 +24,6 @@ import Network.Wai.Handler.Warp   (run)
 import Servant.Server.StaticFiles (serveDirectoryFileServer)
 import UnliftIO hiding (Handler)
 import Database.PostgreSQL.Simple as PGS
-import Data.Pool as Pool
 import Control.Monad.Reader
 import Data.String.Conv (toS)
 import Control.Monad.Except
@@ -152,7 +151,7 @@ cancelJob :: Config
           -> JobId
           -> Handler NoContent
 cancelJob Config{..} env jid = do
-  liftIO $ withResource cfgDbPool $ \conn -> void $ cancelJobIO conn cfgTableName jid
+  liftIO $ withDbConnection' cfgDbConnProvider $ \conn -> void $ cancelJobIO conn cfgTableName jid
   redirectToHome env
 
 runJobNow :: Config
@@ -160,7 +159,7 @@ runJobNow :: Config
           -> JobId
           -> Handler NoContent
 runJobNow Config{..} env jid = do
-  liftIO $ withResource cfgDbPool $ \conn -> void $ runJobNowIO conn cfgTableName jid
+  liftIO $ withDbConnection' cfgDbConnProvider $ \conn -> void $ runJobNowIO conn cfgTableName jid
   redirectToHome env
 
 enqueueJob :: Config
@@ -168,7 +167,7 @@ enqueueJob :: Config
            -> JobId
            -> Handler NoContent
 enqueueJob Config{..} env jid = do
-  liftIO $ withResource cfgDbPool $ \conn -> do
+  liftIO $ withDbConnection' cfgDbConnProvider $ \conn -> do
     void $ unlockJobIO conn cfgTableName jid
     void $ runJobNowIO conn cfgTableName jid
   redirectToHome env
@@ -182,9 +181,9 @@ filterResults :: Config
               -> Env
               -> Maybe Filter
               -> Handler (Html ())
-filterResults cfg@Config{cfgJobToHtml, cfgDbPool} Env{..}  mFilter = do
+filterResults cfg@Config{cfgJobToHtml, cfgDbConnProvider} Env{..}  mFilter = do
   let filters = fromMaybe mempty mFilter
-  (jobs, runningCount) <- liftIO $ Pool.withResource cfgDbPool $ \conn -> (,)
+  (jobs, runningCount) <- liftIO $ withDbConnection' cfgDbConnProvider $ \conn -> (,)
     <$> (filterJobs cfg conn filters)
     <*> (countJobs cfg conn filters{ filterStatuses = [Job.Locked] })
   t <- liftIO getCurrentTime
