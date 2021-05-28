@@ -7,6 +7,7 @@ import OddJobs.Types
 import Database.PostgreSQL.Simple as PGS
 import Data.Pool
 import Control.Monad.Logger (LogLevel(..), LogStr, toLogStr)
+import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Text (Text)
 import Lucid (Html, toHtml, class_, div_, span_, br_, button_, a_, href_, onclick_)
 import Data.Maybe (fromMaybe)
@@ -35,8 +36,8 @@ mkConfig :: (LogLevel -> LogEvent -> IO ())
          -- ^ "Structured logging" function. Ref: 'cfgLogger'
          -> TableName
          -- ^ DB table which holds your jobs. Ref: 'cfgTableName'
-         -> Pool Connection
-         -- ^ DB connection-pool to be used by job-runner. Ref: 'cfgDbPool'
+         -> DbConnectionProvider
+         -- ^ How job-runner with get DB connections to be use. Ref: 'cfgDbConnProvider'
          -> ConcurrencyControl
          -- ^ Concurrency configuration. Ref: 'cfgConcurrencyControl'
          -> (Job -> IO ())
@@ -53,14 +54,14 @@ mkConfig :: (LogLevel -> LogEvent -> IO ())
          -- function, unless you know what you're doing.
          -> Config
          -- ^ The final 'Config' that can be used to start various job-runners
-mkConfig logger tname dbpool ccControl jrunner configOverridesFn =
+mkConfig logger tname dbConnProvider ccControl jrunner configOverridesFn =
   let cfg = configOverridesFn $ Config
             { cfgPollingInterval = defaultPollingInterval
             , cfgOnJobSuccess = (const $ pure ())
             , cfgOnJobFailed = []
             , cfgJobRunner = jrunner
             , cfgLogger = logger
-            , cfgDbPool = dbpool
+            , cfgDbConnProvider = dbConnProvider
             , cfgOnJobStart = (const $ pure ())
             , cfgDefaultMaxAttempts = 10
             , cfgTableName = tname
@@ -232,15 +233,15 @@ defaultJobType Job{jobPayload} =
 defaultPollingInterval :: Seconds
 defaultPollingInterval = Seconds 5
 
--- | Convenience function to create a DB connection-pool with some sensible
--- defaults. Please see the source-code of this function to understand what it's
--- doing.
+-- | Convenience function to create a DB connection provider, backed by a
+-- connection-pool with some sensible defaults. Please see the source-code
+-- of this function to understand what it's doing.
 withConnectionPool :: (MonadUnliftIO m)
                    => Either BS.ByteString PGS.ConnectInfo
-                   -> (Pool PGS.Connection -> m a)
+                   -> (DbConnectionProvider -> m a)
                    -> m a
 withConnectionPool connConfig action = withRunInIO $ \runInIO -> do
-  bracket poolCreator destroyAllResources (runInIO . action)
+  bracket poolCreator destroyAllResources (runInIO . action . PoolingConnectionProvider)
   where
     poolCreator = liftIO $
       case connConfig of

@@ -62,6 +62,8 @@ module OddJobs.Job
   , concatJobDbColumns
   , fetchAllJobTypes
   , fetchAllJobRunners
+  , withDbConnection
+  , withDbConnection'
 
   -- * JSON helpers
   --
@@ -74,12 +76,12 @@ module OddJobs.Job
 where
 
 import OddJobs.Types
-import Data.Pool
 import Data.Text as T
 import Database.PostgreSQL.Simple as PGS
 import Database.PostgreSQL.Simple.Notification
 import UnliftIO.Async
 import UnliftIO.Concurrent (threadDelay, myThreadId)
+import Data.Pool (withResource)
 import Data.String
 import System.Posix.Process (getProcessID)
 import Network.HostName (getHostName)
@@ -132,7 +134,7 @@ class (MonadUnliftIO m, MonadBaseControl IO m) => HasJobRunner m where
   onJobSuccess :: Job -> m ()
   onJobFailed :: forall a . m [JobErrHandler a]
   getJobRunner :: m (Job -> IO ())
-  getDbPool :: m (Pool Connection)
+  getDbConnProvider :: m DbConnectionProvider
   getTableName :: m TableName
   onJobStart :: Job -> m ()
   getDefaultMaxAttempts :: m Int
@@ -173,7 +175,7 @@ instance HasJobRunner RunnerM where
     fn <- cfgOnJobSuccess . envConfig <$> ask
     logCallbackErrors (jobId job) "onJobSuccess" $ liftIO $ fn job
   getJobRunner = cfgJobRunner . envConfig <$> ask
-  getDbPool = cfgDbPool . envConfig <$> ask
+  getDbConnProvider = cfgDbConnProvider . envConfig <$> ask
   getTableName = cfgTableName . envConfig <$> ask
   onJobStart job = do
     fn <- cfgOnJobStart . envConfig <$> ask
@@ -252,8 +254,19 @@ withDbConnection :: (HasJobRunner m)
                  => (Connection -> m a)
                  -> m a
 withDbConnection action = do
-  pool <- getDbPool
-  withResource pool action
+  dbConnProvider <- getDbConnProvider
+  withDbConnection' dbConnProvider action
+
+withDbConnection' :: (MonadUnliftIO m, MonadBaseControl IO m, MonadIO m)
+                  => DbConnectionProvider
+                  -> (Connection -> m a)
+                  -> m a
+withDbConnection' connProv action = case connProv of
+  OnDemandConnectionProvider connect close -> do
+    bracket (liftIO connect) (liftIO . close) action
+
+  PoolingConnectionProvider pgPool ->
+    withResource pgPool action
 
 --
 -- $dbHelpers
@@ -496,12 +509,11 @@ getConcurrencyControlFn = getConcurrencyControl >>= \case
 jobPoller :: (HasJobRunner m) => m ()
 jobPoller = do
   processName <- liftIO jobWorkerName
-  pool <- getDbPool
   tname <- getTableName
   lockTimeout <- getDefaultJobTimeout
   log LevelInfo $ LogText $ toS $ "Starting the job monitor via DB polling with processName=" <> processName
   concurrencyControlFn <- getConcurrencyControlFn
-  withResource pool $ \pollerDbConn -> forever $ concurrencyControlFn >>= \case
+  withDbConnection $ \pollerDbConn -> forever $ concurrencyControlFn >>= \case
     False -> log LevelWarn $ LogText $ "NOT polling the job queue due to concurrency control"
     True -> do
       nextAction <- mask_ $ do
@@ -531,7 +543,6 @@ jobEventListener :: (HasJobRunner m)
                  => m ()
 jobEventListener = do
   log LevelInfo $ LogText "Starting the job monitor via LISTEN/NOTIFY..."
-  pool <- getDbPool
   tname <- getTableName
   jwName <- liftIO jobWorkerName
   concurrencyControlFn <- getConcurrencyControlFn
@@ -545,7 +556,7 @@ jobEventListener = do
           [Only (_ :: JobId)] -> pure $ Just jid
           x -> error $ "WTF just happned? Was expecting a single row to be returned, received " ++ (show x)
 
-  withResource pool $ \monitorDbConn -> do
+  withDbConnection $ \monitorDbConn -> do
     void $ liftIO $ PGS.execute monitorDbConn ("LISTEN " <> pgEventName tname) ()
     forever $ do
       log LevelDebug $ LogText "[LISTEN/NOFIFY] Event loop"
@@ -629,7 +640,7 @@ scheduleJob conn tname payload runAt = do
   case rs of
     [] -> (Prelude.error . (<> "Not expecting a blank result set when creating a job. Query=")) <$> queryFormatter
     [r] -> pure r
-    _ -> (Prelude.error . (<> "Not expecting multiple rows when creating a single job. Query=")) <$> queryFormatter 
+    _ -> (Prelude.error . (<> "Not expecting multiple rows when creating a single job. Query=")) <$> queryFormatter
 
 
 -- getRunnerEnv :: (HasJobRunner m) => m RunnerEnv
@@ -668,10 +679,10 @@ throwParsePayloadWith parser job =
 fetchAllJobTypes :: (MonadIO m)
                  => Config
                  -> m [Text]
-fetchAllJobTypes Config{cfgAllJobTypes, cfgDbPool} = liftIO $ do
+fetchAllJobTypes Config{cfgAllJobTypes, cfgDbConnProvider} = liftIO $ do
   case cfgAllJobTypes of
     AJTFixed jts -> pure jts
-    AJTSql fn -> withResource cfgDbPool fn
+    AJTSql fn -> withDbConnection' cfgDbConnProvider fn
     AJTCustom fn -> fn
 
 -- | Used by web\/admin IO to fetch a \"master list\" of all known job-runners.
@@ -683,6 +694,6 @@ fetchAllJobTypes Config{cfgAllJobTypes, cfgDbPool} = liftIO $ do
 fetchAllJobRunners :: (MonadIO m)
                    => Config
                    -> m [JobRunnerName]
-fetchAllJobRunners Config{cfgTableName, cfgDbPool} = liftIO $ withResource cfgDbPool $ \conn -> do
+fetchAllJobRunners Config{cfgTableName, cfgDbConnProvider} = liftIO $ withDbConnection' cfgDbConnProvider $ \conn -> do
   fmap (mapMaybe fromOnly) $ PGS.query_ conn $ "select distinct locked_by from " <> cfgTableName
 

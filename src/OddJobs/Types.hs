@@ -9,6 +9,7 @@ module OddJobs.Types where
 import Database.PostgreSQL.Simple as PGS
 import UnliftIO (MonadIO)
 import UnliftIO.Concurrent (threadDelay)
+import Data.Pool (Pool)
 import Data.Text.Conversions
 import Database.PostgreSQL.Simple.FromField as FromField
 import Database.PostgreSQL.Simple.ToField as ToField
@@ -20,8 +21,9 @@ import GHC.Generics
 import Data.Aeson as Aeson hiding (Success)
 import Data.String.Conv
 import Lucid (Html(..))
-import Data.Pool (Pool)
 import Control.Monad.Logger (LogLevel)
+import Control.Monad.Trans.Control (MonadBaseControl)
+
 
 -- | An alias for 'Query' type. Since this type has an instance of 'IsString'
 -- you do not need to do anything special to create a value for this type. Just
@@ -235,6 +237,14 @@ data AllJobTypes
   -- | A custom 'IO' action for fetching the list of job-types.
   | AJTCustom (IO [Text])
 
+
+-- | Provides a mechanism for using a DB connections. This may be a done via a
+-- connection-pool, or by creating a new connection each time
+-- (e.g. if you are using pgbouncer).
+data DbConnectionProvider
+  = OnDemandConnectionProvider (IO Connection) (Connection -> IO ())
+  | PoolingConnectionProvider (Pool Connection)
+
 -- | While odd-jobs is highly configurable and the 'Config' data-type might seem
 -- daunting at first, it is not necessary to tweak every single configuration
 -- parameter by hand.
@@ -269,12 +279,12 @@ data Config = Config
     -- in the implementtion guide.
   , cfgConcurrencyControl :: ConcurrencyControl
 
-    -- | The DB connection-pool to use for the job-runner. __Note:__ in case
-    -- your jobs require a DB connection, please create a separate
-    -- connection-pool for them. This pool will be used ONLY for monitoring jobs
-    -- and changing their status. We need to have __at least 4 connections__ in
-    -- this connection-pool for the job-runner to work as expected.
-  , cfgDbPool :: Pool Connection
+    -- | How job-runner will acquire DB connections. __Note:__ in case
+    -- you use a connection pool and your jobs require a DB connection, please
+    -- create a separate connection-pool for them. This pool will be used ONLY
+    -- for monitoring jobs and changing their status. We need to have __at least
+    -- 4 connections__ in this connection-pool for the job-runner to work as expected.
+  , cfgDbConnProvider :: DbConnectionProvider
 
     -- | How frequently should the 'jobPoller' check for jobs where the Job's
     -- 'jobRunAt' field indicates that it's time for the job to be executed.
