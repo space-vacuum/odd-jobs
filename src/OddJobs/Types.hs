@@ -7,6 +7,7 @@
 module OddJobs.Types where
 
 import Database.PostgreSQL.Simple as PGS
+import Database.PostgreSQL.Simple.Types as PGS
 import UnliftIO (MonadIO)
 import UnliftIO.Concurrent (threadDelay)
 import Data.Pool (Pool)
@@ -25,7 +26,8 @@ import Control.Monad.Logger (LogLevel)
 import Control.Monad.Trans.Control (MonadBaseControl)
 
 
--- | An alias for 'Query' type. Since this type has an instance of 'IsString'
+-- | An alias for 'QualifiedIdentifier' type. It is used for the job table name.
+-- Since this type has an instance of 'IsString',
 -- you do not need to do anything special to create a value for this type. Just
 -- ensure you have the @OverloadedStrings@ extention enabled. For example:
 --
@@ -35,10 +37,21 @@ import Control.Monad.Trans.Control (MonadBaseControl)
 -- myJobsTable :: TableName
 -- myJobsTable = "my_jobs"
 -- @
-type TableName = PGS.Query
+-- 
+-- This should also work for table names qualified by the schema name. For example:
+--
+-- @
+-- {-\# LANGUAGE OverloadedStrings \#-}
+--
+-- myJobsTable :: TableName
+-- myJobsTable = "odd_jobs.jobs"
+-- @
 
-pgEventName :: TableName -> Query
-pgEventName tname = "job_created_" <> tname
+type TableName = PGS.QualifiedIdentifier
+
+pgEventName :: TableName -> PGS.Identifier
+pgEventName (PGS.QualifiedIdentifier Nothing tname) = PGS.Identifier $ "jobs_created_" <> tname
+pgEventName (PGS.QualifiedIdentifier (Just schema) tname) = PGS.Identifier $ "jobs_created_" <> schema <> "_" <> tname
 
 newtype Seconds = Seconds { unSeconds :: Int } deriving (Eq, Show, Ord, Num, Read)
 
@@ -96,7 +109,7 @@ data FailureMode
 -- notifications](https://www.haskelltutorials.com/odd-jobs/guide.html#alerts)
 -- in the implementation guide to understand how to use the machinery provided
 -- by 'JobErrHandler' and 'cfgOnJobFailed'.
-data JobErrHandler a = forall e . (Exception e) => JobErrHandler (e -> Job -> FailureMode -> IO a)
+data JobErrHandler = forall a e . (Exception e) => JobErrHandler (e -> Job -> FailureMode -> IO a)
 
 
 -- | __Note:__ Please read the section on [controlling
@@ -301,7 +314,7 @@ data Config = Config
   -- | User-defined error-handler that is called whenever a job fails (indicated
   -- by 'cfgJobRunner' throwing an unhandled runtime exception). Please refer to
   -- 'JobErrHandler' for documentation on how to use this.
-  , cfgOnJobFailed :: forall a . [JobErrHandler a]
+  , cfgOnJobFailed :: [JobErrHandler]
 
   -- | User-defined callback function that is called whenever a job starts
   -- execution.

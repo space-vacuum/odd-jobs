@@ -132,7 +132,7 @@ import Database.PostgreSQL.Simple.ToField as PGS (toField)
 class (MonadUnliftIO m, MonadBaseControl IO m) => HasJobRunner m where
   getPollingInterval :: m Seconds
   onJobSuccess :: Job -> m ()
-  onJobFailed :: forall a . m [JobErrHandler a]
+  onJobFailed :: m [JobErrHandler]
   getJobRunner :: m (Job -> IO ())
   getDbConnProvider :: m DbConnectionProvider
   getTableName :: m TableName
@@ -248,8 +248,8 @@ concatJobDbColumns = concatJobDbColumns_ jobDbColumns ""
     concatJobDbColumns_ (col:cols) x = concatJobDbColumns_ cols (x <> col <> ", ")
 
 
-findJobByIdQuery :: TableName -> PGS.Query
-findJobByIdQuery tname = "SELECT " <> concatJobDbColumns <> " FROM " <> tname <> " WHERE id = ?"
+findJobByIdQuery :: PGS.Query
+findJobByIdQuery = "SELECT " <> concatJobDbColumns <> " FROM ? WHERE id = ?"
 
 withDbConnection :: (HasJobRunner m)
                  => (Connection -> m a)
@@ -289,17 +289,17 @@ findJobById jid = do
   withDbConnection $ \conn -> liftIO $ findJobByIdIO conn tname jid
 
 findJobByIdIO :: Connection -> TableName -> JobId -> IO (Maybe Job)
-findJobByIdIO conn tname jid = PGS.query conn (findJobByIdQuery tname) (Only jid) >>= \case
+findJobByIdIO conn tname jid = PGS.query conn findJobByIdQuery (tname, jid) >>= \case
   [] -> pure Nothing
   [j] -> pure (Just j)
   js -> Prelude.error $ "Not expecting to find multiple jobs by id=" <> (show jid)
 
 
-saveJobQuery :: TableName -> PGS.Query
-saveJobQuery tname = "UPDATE " <> tname <> " set run_at = ?, status = ?, payload = ?, last_error = ?, attempts = ?, max_retries = ?, locked_at = ?, locked_by = ? WHERE id = ? RETURNING " <> concatJobDbColumns
+saveJobQuery :: PGS.Query
+saveJobQuery = "UPDATE ? set run_at = ?, status = ?, payload = ?, last_error = ?, attempts = ?, max_retries = ?, locked_at = ?, locked_by = ? WHERE id = ? RETURNING " <> concatJobDbColumns
 
-deleteJobQuery :: TableName -> PGS.Query
-deleteJobQuery tname = "DELETE FROM " <> tname <> " WHERE id = ?"
+deleteJobQuery :: PGS.Query
+deleteJobQuery = "DELETE FROM ? WHERE id = ?"
 
 saveJob :: (HasJobRunner m) => Job -> m Job
 saveJob j = do
@@ -308,8 +308,9 @@ saveJob j = do
 
 saveJobIO :: Connection -> TableName -> Job -> IO Job
 saveJobIO conn tname Job{jobRunAt, jobStatus, jobPayload, jobLastError, jobAttempts, jobMaxRetries, jobLockedBy, jobLockedAt, jobId} = do
-  rs <- PGS.query conn (saveJobQuery tname)
-        ( jobRunAt
+  rs <- PGS.query conn saveJobQuery
+        ( tname
+        , jobRunAt
         , jobStatus
         , jobPayload
         , jobLastError
@@ -331,7 +332,7 @@ deleteJob jid = do
 
 deleteJobIO :: Connection -> TableName -> JobId -> IO ()
 deleteJobIO conn tname jid = do
-  void $ PGS.execute conn (deleteJobQuery tname) (Only jid)
+  void $ PGS.execute conn deleteJobQuery (tname, jid)
 
 runJobNowIO :: Connection -> TableName -> JobId -> IO (Maybe Job)
 runJobNowIO conn tname jid = do
@@ -342,9 +343,9 @@ runJobNowIO conn tname jid = do
 -- and somehow send an uninterruptibleCancel to that thread.
 unlockJobIO :: Connection -> TableName -> JobId -> IO (Maybe Job)
 unlockJobIO conn tname jid = do
-  fmap listToMaybe $ PGS.query conn q (Retry, jid, In [Locked])
+  fmap listToMaybe $ PGS.query conn q (tname, Retry, jid, In [Locked])
   where
-    q = "update " <> tname <> " set status=?, run_at=now(), locked_at=null, locked_by=null where id=? and status in ? returning " <> concatJobDbColumns
+    q = "update ? set status=?, run_at=now(), locked_at=null, locked_by=null where id=? and status in ? returning " <> concatJobDbColumns
 
 cancelJobIO :: Connection -> TableName -> JobId -> IO (Maybe Job)
 cancelJobIO conn tname jid =
@@ -355,9 +356,9 @@ updateJobHelper :: TableName
                 -> (Status, [Status], Maybe UTCTime, JobId)
                 -> IO (Maybe Job)
 updateJobHelper tname conn (newStatus, existingStates, mRunAt, jid) =
-  fmap listToMaybe $ PGS.query conn q (newStatus, runAt, jid, PGS.In existingStates)
+  fmap listToMaybe $ PGS.query conn q (tname, newStatus, runAt, jid, PGS.In existingStates)
   where
-    q = "update " <> tname <> " set attempts=0, status=?, run_at=? where id=? and status in ? returning " <> concatJobDbColumns
+    q = "update ? set attempts=0, status=?, run_at=? where id=? and status in ? returning " <> concatJobDbColumns
     runAt = case mRunAt of
       Nothing -> PGS.toField $ PGS.Identifier "run_at"
       Just t -> PGS.toField t
@@ -397,6 +398,7 @@ runJob jid = do
     Just job -> do
       startTime <- liftIO getCurrentTime
       lockTimeout <- getDefaultJobTimeout
+      log LevelInfo $ LogJobStart job
       (flip catches) [Handler $ timeoutHandler job startTime, Handler $ exceptionHandler job startTime] $ do
         runJobWithTimeout lockTimeout job
         endTime <- liftIO getCurrentTime
@@ -428,7 +430,7 @@ runJob jid = do
 
       let tryHandler (JobErrHandler handler) res = case fromException e of
             Nothing -> res
-            Just e_ -> handler e_ newJob failureMode
+            Just e_ -> void $ handler e_ newJob failureMode
       handlers <- onJobFailed
       liftIO $ void $ Prelude.foldr tryHandler (throwIO e) handlers
       pure ()
@@ -468,8 +470,8 @@ jobMonitor = do
         liftIO $ Dir.removePathForcibly f
 
 -- | Ref: 'jobPoller'
-jobPollingSql :: TableName -> Query
-jobPollingSql tname = "update " <> tname <> " set status = ?, locked_at = ?, locked_by = ?, attempts=attempts+1 WHERE id in (select id from " <> tname <> " where (run_at<=? AND ((status in ?) OR (status = ? and locked_at<?))) ORDER BY run_at ASC LIMIT 1 FOR UPDATE) RETURNING id"
+jobPollingSql :: Query
+jobPollingSql = "update ? set status = ?, locked_at = ?, locked_by = ?, attempts=attempts+1 WHERE id in (select id from ? where (run_at<=? AND ((status in ?) OR (status = ? and locked_at<?))) ORDER BY attempts ASC, run_at ASC LIMIT 1 FOR UPDATE) RETURNING id"
 
 waitForJobs :: (HasJobRunner m)
             => m ()
@@ -516,14 +518,25 @@ jobPoller = do
   log LevelInfo $ LogText $ toS $ "Starting the job monitor via DB polling with processName=" <> processName
   concurrencyControlFn <- getConcurrencyControlFn
   withDbConnection $ \pollerDbConn -> forever $ concurrencyControlFn >>= \case
-    False -> log LevelWarn $ LogText $ "NOT polling the job queue due to concurrency control"
+    False -> do
+      log LevelWarn $ LogText $ "NOT polling the job queue due to concurrency control"
+      -- If we can't run any jobs ATM, relax and wait for resources to free up
+      delayAction
     True -> do
       nextAction <- mask_ $ do
         log LevelDebug $ LogText $ toS $ "[" <> processName <> "] Polling the job queue.."
         t <- liftIO getCurrentTime
         r <- liftIO $
-             PGS.query pollerDbConn (jobPollingSql tname)
-             (Locked, t, processName, t, (In [Queued, Retry]), Locked, (addUTCTime (fromIntegral $ negate $ unSeconds lockTimeout) t))
+             PGS.query pollerDbConn jobPollingSql
+             ( tname
+             , Locked
+             , t
+             , processName
+             , tname
+             , t
+             , (In [Queued, Retry])
+             , Locked
+             , (addUTCTime (fromIntegral $ negate $ unSeconds lockTimeout) t))
         case r of
           -- When we don't have any jobs to run, we can relax a bit...
           [] -> pure delayAction
@@ -550,8 +563,8 @@ jobEventListener = do
   concurrencyControlFn <- getConcurrencyControlFn
 
   let tryLockingJob jid = do
-        let q = "UPDATE " <> tname <> " SET status=?, locked_at=now(), locked_by=?, attempts=attempts+1 WHERE id=? AND status in ? RETURNING id"
-        (withDbConnection $ \conn -> (liftIO $ PGS.query conn q (Locked, jwName, jid, In [Queued, Retry]))) >>= \case
+        let q = "UPDATE ? SET status=?, locked_at=now(), locked_by=?, attempts=attempts+1 WHERE id=? AND status in ? RETURNING id"
+        (withDbConnection $ \conn -> (liftIO $ PGS.query conn q (tname, Locked, jwName, jid, In [Queued, Retry]))) >>= \case
           [] -> do
             log LevelDebug $ LogText $ toS $ "Job was locked by someone else before I could start. Skipping it. JobId=" <> show jid
             pure Nothing
@@ -559,9 +572,9 @@ jobEventListener = do
           x -> error $ "WTF just happned? Was expecting a single row to be returned, received " ++ (show x)
 
   withDbConnection $ \monitorDbConn -> do
-    void $ liftIO $ PGS.execute monitorDbConn ("LISTEN " <> pgEventName tname) ()
+    void $ liftIO $ PGS.execute monitorDbConn ("LISTEN ?") (Only $ pgEventName tname)
     forever $ do
-      log LevelDebug $ LogText "[LISTEN/NOFIFY] Event loop"
+      log LevelDebug $ LogText "[LISTEN/NOTIFY] Event loop"
       notif <- liftIO $ getNotification monitorDbConn
       concurrencyControlFn >>= \case
         False -> log LevelWarn $ LogText "Received job event, but ignoring it due to concurrency control"
@@ -596,8 +609,8 @@ jobEventListener = do
 
 
 
-createJobQuery :: TableName -> PGS.Query
-createJobQuery tname = "INSERT INTO " <> tname <> "(run_at, status, payload, last_error, attempts, max_retries, locked_at, locked_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING " <> concatJobDbColumns
+createJobQuery :: PGS.Query
+createJobQuery = "INSERT INTO ? (run_at, status, payload, last_error, attempts, max_retries, locked_at, locked_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING " <> concatJobDbColumns
 
 -- $createJobs
 --
@@ -638,9 +651,9 @@ scheduleJob :: ToJSON p
             -> Maybe Int    -- ^ overrides the maximum number of retries for a job
             -> IO Job
 scheduleJob conn tname payload runAt maxRetries = do
-  let args = ( runAt, Queued, toJSON payload, Nothing :: Maybe Value, 0 :: Int, maxRetries, Nothing :: Maybe Text, Nothing :: Maybe Text )
-      queryFormatter = toS <$> (PGS.formatQuery conn (createJobQuery tname) args)
-  rs <- PGS.query conn (createJobQuery tname) args
+  let args = ( tname, runAt, Queued, toJSON payload, Nothing :: Maybe Value, 0 :: Int, maxRetries, Nothing :: Maybe Text, Nothing :: Maybe Text )
+      queryFormatter = toS <$> (PGS.formatQuery conn createJobQuery args)
+  rs <- PGS.query conn createJobQuery args
   case rs of
     [] -> (Prelude.error . (<> "Not expecting a blank result set when creating a job. Query=")) <$> queryFormatter
     [r] -> pure r
@@ -699,5 +712,4 @@ fetchAllJobRunners :: (MonadIO m)
                    => Config
                    -> m [JobRunnerName]
 fetchAllJobRunners Config{cfgTableName, cfgDbConnProvider} = liftIO $ withDbConnection' cfgDbConnProvider $ \conn -> do
-  fmap (mapMaybe fromOnly) $ PGS.query_ conn $ "select distinct locked_by from " <> cfgTableName
-
+  fmap (mapMaybe fromOnly) $ PGS.query conn "select distinct locked_by from ?" (Only cfgTableName)
