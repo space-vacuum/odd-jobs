@@ -38,8 +38,8 @@ jobs:
     #     PGPASSWORD=jobs_test psql -U jobs_test -h localhost -c 'select 1'
 
     - name: Install Dependencies
-        run: |
-          sudo apt-get install postgresql
+      run: |
+        sudo apt-get install postgresql
 
     - uses: actions/checkout@v2
 
