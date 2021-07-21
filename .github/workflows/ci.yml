@@ -40,7 +40,7 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt-get install postgresql
-        echo "export PATH=$PATH:/usr/lib/postgresql/12/bin/" >> /home/ubuntu/.bashrc
+        echo "export PATH=$PATH:/usr/lib/postgresql/12/bin/" >> ~/.bashrc
 
     - uses: actions/checkout@v2
 
