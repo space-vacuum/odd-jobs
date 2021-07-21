@@ -453,13 +453,14 @@ runJob jid = do
           pure (newJob, failureMode, logLevel)
 
         Just period -> do
+          let nextRunAt = nextScheduledRunAt period startTime endTime
           newJob <- saveJob job { jobStatus    = Retry
                                 , jobLockedBy  = Nothing
                                 , jobLockedAt  = Nothing
                                 , jobLastError = Just . toJSON $ show e -- TODO: convert errors to json properly
                                 , jobRunAt     = if jobAttempts >= maxAttemptsAllowed
-                                                  then nextScheduledRunAt period startTime endTime
-                                                  else retryTime
+                                                  then nextRunAt
+                                                  else min retryTime nextRunAt
                                 }
           pure (newJob, FailWithRetry, LevelWarn)
 
