@@ -183,6 +183,11 @@ data ReschedulingPolicy
   -- | Reschedule at job end time + period.
   -- Used for jobs that should have a constant waiting time between runs.
   | ReschedulingPolicyAtEndExcludeRunningTime
+  -- TODO: Implement me.
+  -- -- | Reschedule job at {previous runAt + period} before running the job.
+  -- -- Used for periodic jobs that must be started at a precise time interval, like Cron.
+  -- -- Caution: This can cause the job to execute multiple times in concurrently if it takes longer than the period.
+  -- | ReschedulingPolicyAtStart
   deriving (Eq, Show, Generic, Enum, Bounded)
 
 instance ToJSON ReschedulingPolicy where

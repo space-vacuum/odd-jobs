@@ -478,7 +478,6 @@ runJob jid = do
     nextScheduledRunAt period startTime currentTime =
       let periodTime = fromIntegral $ jobPeriodTime period
       in case jobPeriodReschedulingPolicy period of
-          -- ReschedulingPolicyAtStart                 -> addUTCTime periodTime startTime
           ReschedulingPolicyAtEnd                   -> addUTCTime periodTime startTime
           ReschedulingPolicyAtEndExcludeRunningTime -> addUTCTime periodTime currentTime
 
