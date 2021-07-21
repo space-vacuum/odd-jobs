@@ -43,8 +43,10 @@ jobs:
 
         echo "export PATH=$PATH:/usr/lib/postgresql/12/bin/" >> ~/.bashrc;
 
-        initdb;
         cat ~/.bashrc;
+        which initdb;
+        which postgres;
+        initdb;
         ls -al;
         pwd;
 
