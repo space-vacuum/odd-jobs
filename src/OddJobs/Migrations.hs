@@ -8,38 +8,47 @@ import Database.PostgreSQL.Simple as PGS
 import Database.PostgreSQL.Simple.Types as PGS
 import Data.Functor (void)
 import OddJobs.Types
+import Text.RawString.QQ (r)
 
 createJobTableQuery :: Query
-createJobTableQuery = "CREATE TABLE IF NOT EXISTS ?" <>
-  "( id serial primary key" <>
-  ", created_at timestamp with time zone default now() not null" <>
-  ", updated_at timestamp with time zone default now() not null" <>
-  ", run_at timestamp with time zone default now() not null" <>
-  ", status text not null" <>
-  ", payload jsonb not null" <>
-  ", last_error jsonb null" <>
-  ", attempts int not null default 0" <>
-  ", max_retries int null" <>
-  ", locked_at timestamp with time zone null" <>
-  ", locked_by text null" <>
-  ", constraint incorrect_locking_info CHECK ((status <> 'locked' and locked_at is null and locked_by is null) or (status = 'locked' and locked_at is not null and locked_by is not null))" <>
-  ");" <>
-  "create index if not exists ? on ?(created_at);" <>
-  "create index if not exists ? on ?(updated_at);" <>
-  "create index if not exists ? on ?(locked_at);" <>
-  "create index if not exists ? on ?(locked_by);" <>
-  "create index if not exists ? on ?(status);" <>
-  "create index if not exists ? on ?(run_at);"
+createJobTableQuery = [r|
+  CREATE TABLE IF NOT EXISTS ?
+    ( id serial primary key
+    , created_at timestamp with time zone default now() not null
+    , updated_at timestamp with time zone default now() not null
+    , run_at timestamp with time zone default now() not null
+    , status text not null
+    , payload jsonb not null
+    , last_error jsonb null
+    , attempts int not null default 0
+    , max_retries int null
+    , locked_at timestamp with time zone null
+    , locked_by text null
+    , period int null
+    , rescheduling_policy text null
+    , constraint incorrect_locking_info CHECK ((status <> 'locked' and locked_at is null and locked_by is null) or (status = 'locked' and locked_at is not null and locked_by is not null))
+    );
+
+
+  create index if not exists ? on ?(created_at);
+  create index if not exists ? on ?(updated_at);
+  create index if not exists ? on ?(locked_at);
+  create index if not exists ? on ?(locked_by);
+  create index if not exists ? on ?(status);
+  create index if not exists ? on ?(run_at);
+  |]
 
 createNotificationTrigger :: Query
-createNotificationTrigger = "create or replace function ?() returns trigger as $$" <>
-  "begin \n" <>
-  "  perform pg_notify('?', \n" <>
-  "    json_build_object('id', new.id, 'run_at', new.run_at, 'locked_at', new.locked_at)::text); \n" <>
-  "  return new; \n" <>
-  "end; \n" <>
-  "$$ language plpgsql;" <>
-  "create trigger ? after insert on ? for each row execute procedure ?();"
+createNotificationTrigger = [r|
+  create or replace function ?() returns trigger as $$
+  begin
+    perform pg_notify('?',
+      json_build_object('id', new.id, 'run_at', new.run_at, 'locked_at', new.locked_at)::text);
+    return new;
+  end;
+  $$ language plpgsql;
+  create trigger ? after insert on ? for each row execute procedure ?();
+  |]
 
 createJobTable :: Connection -> TableName -> IO ()
 createJobTable conn tname = void $ do

@@ -2,9 +2,12 @@
 module Test where
 
 import Test.Tasty as Tasty
+import qualified OddJobs.Types as Types
 import qualified OddJobs.Migrations as Migrations
 import qualified OddJobs.Job as Job
 import Database.PostgreSQL.Simple as PGS
+import qualified Database.Postgres.Temp as TempDB
+import Data.ByteString (ByteString)
 import Data.Functor (void)
 import Data.Pool as Pool
 import Test.Tasty.HUnit
@@ -40,41 +43,41 @@ import qualified OddJobs.ConfigBuilder as Job
 import UnliftIO
 import Control.Exception (ArithException)
 
-$(Aeson.deriveJSON Aeson.defaultOptions ''Seconds)
+withDb :: (ByteString -> IO ()) -> IO ()
+withDb run =
+  void . TempDB.with $ \db -> run (TempDB.toConnectionString db)
 
 main :: IO ()
 main = do
-  bracket createAppPool destroyAllResources $ \appPool -> do
-    bracket createJobPool destroyAllResources $ \jobPool -> do
-      defaultMain $ tests (Migrations.PoolingConnectionProvider appPool) (Migrations.PoolingConnectionProvider jobPool)
+  withDb $ \connStr -> do
+    bracket (createAppPool connStr) destroyAllResources $ \appPool -> do
+      bracket (createJobPool connStr) destroyAllResources $ \jobPool -> do
+        defaultMain $ tests (Types.PoolingConnectionProvider appPool) (Types.PoolingConnectionProvider jobPool)
   where
-    connInfo = ConnectInfo
-                 { connectHost = "localhost"
-                 , connectPort = fromIntegral (5432 :: Int)
-                 , connectUser = "jobs_test"
-                 , connectPassword = "jobs_test"
-                 , connectDatabase = "jobs_test"
-                 }
-
-    createAppPool = createPool
-      (PGS.connect connInfo)  -- cretea a new resource
-      (PGS.close)             -- destroy resource
-      1                       -- stripes
-      (fromRational 10)       -- number of seconds unused resources are kept around
+    createAppPool connStr = createPool
+      (PGS.connectPostgreSQL connStr)  -- create a new resource
+      (PGS.close)                      -- destroy resource
+      1                                -- stripes
+      (fromRational 10)                -- number of seconds unused resources are kept around
       45
-    createJobPool = createPool
-      (PGS.connect connInfo)  -- cretea a new resource
-      (PGS.close)             -- destroy resource
-      1                       -- stripes
-      (fromRational 10)       -- number of seconds unused resources are kept around
+    createJobPool connStr = createPool
+      (PGS.connectPostgreSQL connStr)  -- create a new resource
+      (PGS.close)                      -- destroy resource
+      1                                -- stripes
+      (fromRational 10)                -- number of seconds unused resources are kept around
       45
 
-tests :: Migrations.DbConnectionProvider -> Migrations.DbConnectionProvider -> TestTree
+tests :: Types.DbConnectionProvider -> Types.DbConnectionProvider -> TestTree
 tests appConnProv jobConnProv = testGroup "All tests"
   [
-    testGroup "simple tests" [ testJobCreation appConnProv jobConnProv
+    testGroup "simple tests" -- [testPeriodicJobScheduling appConnProv jobConnProv]
+                             [ testJobCreation appConnProv jobConnProv
                              , testJobScheduling appConnProv jobConnProv
                              , testJobFailure appConnProv jobConnProv
+                             , testPeriodicJobCreation appConnProv jobConnProv
+                             , testPeriodicJobScheduling appConnProv jobConnProv
+                             , testPeriodicJobFailureRetry appConnProv jobConnProv
+                             , testPeriodicJobFailureNoRetry appConnProv jobConnProv
                              , testEnsureShutdown appConnProv jobConnProv
                              , testGracefulShutdown appConnProv jobConnProv
                              , testJobErrHandler appConnProv jobConnProv
@@ -87,7 +90,7 @@ tests appConnProv jobConnProv = testGroup "All tests"
 myTestCase
   :: TestName
   -> (Connection -> Assertion)
-  -> Migrations.DbConnectionProvider
+  -> Types.DbConnectionProvider
   -> TestTree
 myTestCase tname actualtest pool = testCase tname $ Job.withDbConnection' pool actualtest
 -- myTestCase tname actualtest pool = Tasty.withResource
@@ -98,7 +101,7 @@ myTestCase tname actualtest pool = testCase tname $ Job.withDbConnection' pool a
 --       (actualtest conn))
 
 data Env = Env
-  { envDbPool :: Migrations.DbConnectionProvider
+  { envDbPool :: Types.DbConnectionProvider
   , envLogger :: FastLogger
   }
 
@@ -210,7 +213,7 @@ ensureJobId conn tname jid = Job.findJobByIdIO conn tname jid >>= \case
   Nothing -> error $ "Not expecting job to be deleted. JobId=" <> show jid
   Just j -> pure j
 
-withRandomTable :: (MonadUnliftIO m, MonadBaseControl IO m) => Migrations.DbConnectionProvider -> (Job.TableName -> m a) -> m a
+withRandomTable :: (MonadUnliftIO m, MonadBaseControl IO m) => Types.DbConnectionProvider -> (Job.TableName -> m a) -> m a
 withRandomTable jobConnProv action = do
   (tname :: Job.TableName) <- liftIO ((fromString . ("jobs_" <>)) <$> (replicateM 10 (R.randomRIO ('a', 'z'))))
   finally
@@ -220,13 +223,13 @@ withRandomTable jobConnProv action = do
 testMaxAttempts :: Int
 testMaxAttempts = 3
 
-withNewJobMonitor :: Migrations.DbConnectionProvider -> (Job.TableName -> IORef [Job.LogEvent] -> IO a) -> IO a
+withNewJobMonitor :: Types.DbConnectionProvider -> (Job.TableName -> IORef [Job.LogEvent] -> IO a) -> IO a
 withNewJobMonitor jobConnProv actualTest = do
   withRandomTable jobConnProv $ \tname -> do
     withNamedJobMonitor tname jobConnProv Prelude.id (actualTest tname)
 
 withNamedJobMonitor :: Job.TableName
-                    -> Migrations.DbConnectionProvider
+                    -> Types.DbConnectionProvider
                     -> (Job.Config -> Job.Config)
                     -> (IORef [Job.LogEvent] -> IO b)
                     -> IO b
@@ -247,15 +250,15 @@ payloadGen = Gen.recursive  Gen.choice nonRecursive recursive
                    , PayloadSucceed <$> Gen.element [1, 2, 3]]
     recursive = [ PayloadFail <$> (Gen.element [1, 2, 3]) <*> payloadGen ]
 
-testJobCreation :: Migrations.DbConnectionProvider -> Migrations.DbConnectionProvider -> TestTree
+testJobCreation :: Types.DbConnectionProvider -> Types.DbConnectionProvider -> TestTree
 testJobCreation appConnProv jobConnProv = testCase "job creation" $ do
   withNewJobMonitor jobConnProv $ \tname logRef -> do
     Job.withDbConnection' appConnProv $ \conn -> do
-      Job{jobId} <- Job.createJob conn tname (PayloadSucceed 0) Nothing
-      delaySeconds $ Seconds 6
+      Job{jobId} <- Job.createJob conn tname (PayloadSucceed 0) Nothing Nothing
+      delaySeconds (Job.defaultPollingInterval + Seconds 2)
       assertJobIdStatus conn tname logRef "Expecting job to be successful by now" Job.Success jobId
 
-testEnsureShutdown :: Migrations.DbConnectionProvider -> Migrations.DbConnectionProvider -> TestTree
+testEnsureShutdown :: Types.DbConnectionProvider -> Types.DbConnectionProvider -> TestTree
 testEnsureShutdown appConnProv jobConnProv = testCase "ensure shutdown" $ do
   withRandomTable jobConnProv $ \tname -> do
     (jid, logRef) <- scheduleJob tname
@@ -266,11 +269,11 @@ testEnsureShutdown appConnProv jobConnProv = testCase "ensure shutdown" $ do
     scheduleJob tname = withNamedJobMonitor tname jobConnProv Prelude.id $ \logRef -> do
       t <- getCurrentTime
       Job.withDbConnection' appConnProv $ \conn -> do
-        Job{jobId} <- Job.scheduleJob conn tname (PayloadSucceed 0) (addUTCTime (fromIntegral (2 * (unSeconds Job.defaultPollingInterval))) t) Nothing
+        Job{jobId} <- Job.scheduleJob conn tname (PayloadSucceed 0) (addUTCTime (fromIntegral (2 * (unSeconds Job.defaultPollingInterval))) t) Nothing Nothing
         assertJobIdStatus conn tname logRef "Job is scheduled in future, should still be queueud" Job.Queued jobId
         pure (jobId, logRef)
 
-testGracefulShutdown :: Migrations.DbConnectionProvider -> Migrations.DbConnectionProvider -> TestTree
+testGracefulShutdown :: Types.DbConnectionProvider -> Types.DbConnectionProvider -> TestTree
 testGracefulShutdown appConnProv jobConnProv = testCase "ensure graceful shutdown" $ do
   withRandomTable jobConnProv $ \tname -> do
     setupPreconditions 3 tname >>= \case
@@ -289,8 +292,8 @@ testGracefulShutdown appConnProv jobConnProv = testCase "ensure graceful shutdow
         withNamedJobMonitor tname jobConnProv Prelude.id $ \logRef -> do
           Job.withDbConnection' appConnProv $ \conn -> do
             t <- getCurrentTime
-            j1 <- Job.createJob conn tname (PayloadSucceed $ 4 * Job.defaultPollingInterval) Nothing
-            j2 <- Job.scheduleJob conn tname (PayloadSucceed 0) (addUTCTime (fromIntegral $ unSeconds $ Job.defaultPollingInterval * 2) t) Nothing
+            j1 <- Job.createJob conn tname (PayloadSucceed $ 4 * Job.defaultPollingInterval) Nothing Nothing
+            j2 <- Job.scheduleJob conn tname (PayloadSucceed 0) (addUTCTime (fromIntegral $ unSeconds $ Job.defaultPollingInterval * 2) t) Nothing Nothing
             let waitForPrecondition = do
                   k1 <- Job.findJobByIdIO conn tname (jobId j1)
                   k2 <- Job.findJobByIdIO conn tname (jobId j2)
@@ -310,34 +313,118 @@ testGracefulShutdown appConnProv jobConnProv = testCase "ensure graceful shutdow
                     x -> fail $ "Unexpeted job statuses while setting up the test: " <> show x
             waitForPrecondition
 
-testJobScheduling :: Migrations.DbConnectionProvider -> Migrations.DbConnectionProvider -> TestTree
+testJobScheduling :: Types.DbConnectionProvider -> Types.DbConnectionProvider -> TestTree
 testJobScheduling appConnProv jobConnProv = testCase "job scheduling" $ do
   withNewJobMonitor jobConnProv $ \tname logRef -> do
     Job.withDbConnection' appConnProv $ \conn -> do
       t <- getCurrentTime
-      job@Job{jobId} <- Job.scheduleJob conn tname (PayloadSucceed 0) (addUTCTime 3600 t) Nothing
+      job@Job{jobId} <- Job.scheduleJob conn tname (PayloadSucceed 0) (addUTCTime 3600 t) Nothing Nothing
       delaySeconds $ Seconds 2
+      assertJobIdStatus conn tname logRef "Job is scheduled in the future. It should NOT have been successful by now" Job.Queued jobId
+      void $ Job.saveJobIO conn tname job{jobRunAt = (addUTCTime (-1) t)}
+      delaySeconds (Job.defaultPollingInterval + Seconds 2)
+      assertJobIdStatus conn tname logRef "Job had a runAt date in the past. It should have been successful by now" Job.Success jobId
+
+testPeriodicJobCreation :: Types.DbConnectionProvider -> Types.DbConnectionProvider -> TestTree
+testPeriodicJobCreation appConnProv jobConnProv = testCase "periodic job creation" $ do
+  withNewJobMonitor jobConnProv $ \tname logRef -> do
+    Job.withDbConnection' appConnProv $ \conn -> do
+      let period = Types.JobPeriod 30 Types.ReschedulingPolicyAtEnd
+      t <- getCurrentTime
+      job@Job{jobId} <- Job.scheduleJob conn tname (PayloadSucceed 0) (addUTCTime 3600 t) Nothing (Just period)
+      delaySeconds (Job.defaultPollingInterval + Seconds 2)
       assertJobIdStatus conn tname logRef "Job is scheduled in the future. It should NOT have been successful by now" Job.Queued jobId
       void $ Job.saveJobIO conn tname job{jobRunAt = (addUTCTime (-1) t)}
       delaySeconds (Job.defaultPollingInterval + (Seconds 2))
       assertJobIdStatus conn tname logRef "Job had a runAt date in the past. It should have been successful by now" Job.Success jobId
 
-testJobFailure :: Migrations.DbConnectionProvider -> Migrations.DbConnectionProvider -> TestTree
+testPeriodicJobScheduling :: Types.DbConnectionProvider -> Types.DbConnectionProvider -> TestTree
+testPeriodicJobScheduling appConnProv jobConnProv = testCase "periodic job scheduling" $ do
+  withNewJobMonitor jobConnProv $ \tname logRef -> do
+    Job.withDbConnection' appConnProv $ \conn -> do
+      -- Periodic job that succeeds immediately
+      t <- getCurrentTime
+      let period = Types.JobPeriod 30 Types.ReschedulingPolicyAtEnd
+      Job{jobId} <- Job.scheduleJob conn tname (PayloadSucceed 0) t Nothing (Just period)
+      delaySeconds (Job.defaultPollingInterval + Seconds 2)
+      assertJobIdStatus conn tname logRef "Job should have run by now" Job.Success jobId
+
+      mayFoundJob <- Job.findJobByIdIO conn tname jobId
+      case mayFoundJob of
+        Nothing -> fail "Job should still exist because its periodic"
+        Just job -> do
+          case jobStatus job of
+            Job.Queued -> pure ()
+            status -> fail $ "Job should be in queued or retry state by now. Current status is " <> show status
+
+          if addUTCTime 30 t <= jobRunAt job && jobRunAt job <= addUTCTime 40 t
+            then pure ()
+            else fail "Job was rescheduled at unexpected time. Expected job to be rescheduled to the next period."
+
+testPeriodicJobFailureRetry :: Types.DbConnectionProvider -> Types.DbConnectionProvider -> TestTree
+testPeriodicJobFailureRetry appConnProv jobConnProv = testCase "periodic job scheduling failure" $ do
+  withNewJobMonitor jobConnProv $ \tname logRef -> do
+    Job.withDbConnection' appConnProv $ \conn -> do
+      -- Periodic job that fails immediately with 5 retry attempts
+      t <- getCurrentTime
+      let period = Types.JobPeriod 30 Types.ReschedulingPolicyAtEnd
+      Job{jobId} <- Job.scheduleJob conn tname (PayloadAlwaysFail 0) t (Just 5) (Just period)
+      delaySeconds (Job.defaultPollingInterval + Seconds 2)
+      assertJobIdStatus conn tname logRef "Job should have failed by now at least once by now" Job.Retry jobId
+
+      mayFoundJob <- Job.findJobByIdIO conn tname jobId
+      case mayFoundJob of
+        Nothing -> fail "Job should still exist because its periodic"
+        Just job -> do
+          case jobStatus job of
+            Job.Queued -> pure ()
+            Job.Retry -> pure ()
+            status -> fail $ "Job should be in queued or retry state by now. Current status is " <> show status
+
+          if addUTCTime 0 t <= jobRunAt job && jobRunAt job < addUTCTime 30 t
+            then pure ()
+            else fail "Job was rescheduled at unexpected time. Expected job to be retried quickly."
+
+testPeriodicJobFailureNoRetry :: Types.DbConnectionProvider -> Types.DbConnectionProvider -> TestTree
+testPeriodicJobFailureNoRetry appConnProv jobConnProv = testCase "periodic job scheduling failure" $ do
+  withNewJobMonitor jobConnProv $ \tname logRef -> do
+    Job.withDbConnection' appConnProv $ \conn -> do
+      -- Periodic job that fails immediately with 0 retry
+      t <- getCurrentTime
+      let period = Types.JobPeriod 30 Types.ReschedulingPolicyAtEnd
+      Job{jobId} <- Job.scheduleJob conn tname (PayloadAlwaysFail 0) t (Just 0) (Just period)
+      delaySeconds (Job.defaultPollingInterval + Seconds 2)
+      assertJobIdStatus conn tname logRef "Job should have failed by now and be requeued" Job.Retry jobId
+
+      mayFoundJob <- Job.findJobByIdIO conn tname jobId
+      case mayFoundJob of
+        Nothing -> fail "Job should still exist because its periodic"
+        Just job -> do
+          case jobStatus job of
+            Job.Queued -> pure ()
+            Job.Retry -> pure ()
+            status -> fail $ "Job should be in queued or retry state by now. Current status is " <> show status
+
+          if addUTCTime 30 t <= jobRunAt job && jobRunAt job <= addUTCTime 40 t
+            then pure ()
+            else fail "Job was rescheduled at unexpected time. Expected job to be rescheduled to the next period."
+
+testJobFailure :: Types.DbConnectionProvider -> Types.DbConnectionProvider -> TestTree
 testJobFailure appConnProv jobConnProv = testCase "job failure" $ do
   withNewJobMonitor jobConnProv $ \tname _logRef -> do
     Job.withDbConnection' appConnProv $ \conn -> do
-      Job{jobId} <- Job.createJob conn tname (PayloadAlwaysFail 0) Nothing
+      Job{jobId} <- Job.createJob conn tname (PayloadAlwaysFail 0) Nothing Nothing
       delaySeconds $ (calculateRetryDelay testMaxAttempts) + (Seconds 3)
       Job{jobAttempts, jobStatus} <- ensureJobId conn tname jobId
       assertEqual "Exepcting job to be in Failed status" Job.Failed jobStatus
       assertEqual ("Expecting job attempts to be 3. Found " <> show jobAttempts)  3 jobAttempts
 
-testJobErrHandler :: Migrations.DbConnectionProvider -> Migrations.DbConnectionProvider -> TestTree
+testJobErrHandler :: Types.DbConnectionProvider -> Types.DbConnectionProvider -> TestTree
 testJobErrHandler appConnProv jobConnProv = testCase "job error handler" $ do
   withRandomTable jobConnProv $ \tname -> do
     Job.withDbConnection' appConnProv $ \conn -> do
-      void $ Job.createJob conn tname (PayloadThrowStringException "forced exception") Nothing
-      void $ Job.createJob conn tname PayloadThrowDivideByZero Nothing
+      void $ Job.createJob conn tname (PayloadThrowStringException "forced exception") Nothing Nothing
+      void $ Job.createJob conn tname PayloadThrowDivideByZero Nothing Nothing
       mvar1 <- newMVar False
       mvar2 <- newMVar False
       let addErrHandlers cfg = cfg { Job.cfgOnJobFailed = [ Job.JobErrHandler errHandler2
@@ -422,7 +509,7 @@ data JobEvent = JobStart
 --     actualTest shutdownAfter jobPayloads tname jobsMVar = do
 --       jobs <- forConcurrently jobPayloads $ \pload ->
 --         Job.withDbConnection' appConnProv $ \conn ->
---         liftIO $ Job.createJob conn tname pload
+--         liftIO $ Job.createJob conn tname pload Nothing Nothing
 --       let poller nextAction = case nextAction of
 --             Left s -> pure $ Left s
 --             Right remaining ->
@@ -585,7 +672,7 @@ filterJobs Web.Filter{filterStatuses, filterCreatedAfter, filterCreatedBefore, f
     filterByRunAfter Job.Job{jobRunAt} = maybe True (< jobRunAt) filterRunAfter
 
 -- defaultJobMonitor :: Job.TableName
---                   -> Migrations.DbConnectionProvider
+--                   -> Types.DbConnectionProvider
 --                   -> (Job -> IO ())
 --                   -> IO (Job.JobMonitor, IO ())
 -- defaultJobMonitor tname pool = do

@@ -1,6 +1,7 @@
-{-# LANGUAGE RankNTypes, FlexibleInstances, FlexibleContexts, PartialTypeSignatures, TupleSections, DeriveGeneric, UndecidableInstances #-}
+{-# LANGUAGE RankNTypes, FlexibleInstances, FlexibleContexts, TupleSections, DeriveGeneric, UndecidableInstances #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module OddJobs.Job
   (
@@ -119,6 +120,8 @@ import Prelude hiding (log)
 import GHC.Exts (toList)
 import Database.PostgreSQL.Simple.Types as PGS (Identifier(..))
 import Database.PostgreSQL.Simple.ToField as PGS (toField)
+import Text.RawString.QQ (r)
+import Debug.Trace
 
 -- | The documentation of odd-jobs currently promotes 'startJobRunner', which
 -- expects a fairly detailed 'Config' record, as a top-level function for
@@ -233,6 +236,8 @@ jobDbColumns =
   , "max_retries"
   , "locked_at"
   , "locked_by"
+  , "period"
+  , "rescheduling_policy"
   ]
 
 -- | All 'jobDbColumns' joined together with commas. Useful for constructing SQL
@@ -402,38 +407,79 @@ runJob jid = do
       (flip catches) [Handler $ timeoutHandler job startTime, Handler $ exceptionHandler job startTime] $ do
         runJobWithTimeout lockTimeout job
         endTime <- liftIO getCurrentTime
-        deleteJob jid
-        let newJob = job{jobStatus=Success, jobLockedBy=Nothing, jobLockedAt=Nothing}
-        log LevelInfo $ LogJobSuccess newJob (diffUTCTime endTime startTime)
-        onJobSuccess newJob
-        pure ()
+        case jobPeriod job of
+          -- Clean up non-periodic jobs
+          Nothing -> deleteJob jid
+          -- Reschedule periodic job to next scheduled time
+          Just period -> do
+            let rescheduledJob = job { jobStatus   = Queued
+                                     , jobLockedBy = Nothing
+                                     , jobLockedAt = Nothing
+                                     , jobRunAt    = nextScheduledRunAt period startTime endTime
+                                     }
+            void $ saveJob rescheduledJob
+
+        let jobForNotification = job { jobStatus   = Success
+                                     , jobLockedBy = Nothing
+                                     , jobLockedAt = Nothing
+                                     }
+        log LevelInfo $ LogJobSuccess jobForNotification (diffUTCTime endTime startTime)
+        onJobSuccess jobForNotification
   where
+    timeoutHandler :: HasJobRunner m => Job -> UTCTime -> TimeoutException -> m ()
     timeoutHandler job startTime (e :: TimeoutException) = retryOrFail (toException e) job startTime
+
+    exceptionHandler :: HasJobRunner m => Job -> UTCTime -> SomeException -> m ()
     exceptionHandler job startTime (e :: SomeException) = retryOrFail (toException e) job startTime
-    retryOrFail e job@Job{jobAttempts, jobMaxRetries} startTime = do
+
+    retryOrFail :: HasJobRunner m => SomeException -> Job -> UTCTime -> m ()
+    retryOrFail e job@Job{jobAttempts, jobMaxRetries, jobPayload, jobPeriod} startTime = do
       endTime <- liftIO getCurrentTime
-      defaultMaxAttempts <- maybe getDefaultMaxAttempts pure jobMaxRetries
+      maxAttemptsAllowed <- maybe getDefaultMaxAttempts pure jobMaxRetries
       let runTime = diffUTCTime endTime startTime
-          (newStatus, failureMode, logLevel) = if jobAttempts >= defaultMaxAttempts
-                                               then ( Failed, FailPermanent, LevelError )
-                                               else ( Retry, FailWithRetry, LevelWarn )
-      t <- liftIO getCurrentTime
-      newJob <- saveJob job{ jobStatus=newStatus
-                           , jobLockedBy=Nothing
-                           , jobLockedAt=Nothing
-                           , jobLastError=(Just $ toJSON $ show e) -- TODO: convert errors to json properly
-                           , jobRunAt=(addUTCTime (fromIntegral $ (2::Int) ^ jobAttempts) t)
-                           }
+          retryTime = addUTCTime (fromIntegral $ (2::Int) ^ jobAttempts) endTime
+
+      (jobForNotification, failureMode, logLevel) <- case jobPeriod of
+        Nothing -> do
+          newJob <- saveJob job { jobStatus    = if jobAttempts >= maxAttemptsAllowed then Failed else Retry
+                                , jobLockedBy  = Nothing
+                                , jobLockedAt  = Nothing
+                                , jobLastError = Just . toJSON $ show e -- TODO: convert errors to json properly
+                                , jobRunAt     = retryTime
+                                }
+          let (failureMode, logLevel) = if jobAttempts >= maxAttemptsAllowed
+                                          then (FailPermanent, LevelError)
+                                          else (FailWithRetry, LevelWarn)
+          pure (newJob, failureMode, logLevel)
+
+        Just period -> do
+          newJob <- saveJob job { jobStatus    = Retry
+                                , jobLockedBy  = Nothing
+                                , jobLockedAt  = Nothing
+                                , jobLastError = Just . toJSON $ show e -- TODO: convert errors to json properly
+                                , jobRunAt     = if jobAttempts >= maxAttemptsAllowed
+                                                  then nextScheduledRunAt period startTime endTime
+                                                  else retryTime
+                                }
+          pure (newJob, FailWithRetry, LevelWarn)
+
       case fromException e :: Maybe TimeoutException of
-        Nothing -> log logLevel $ LogJobFailed newJob e failureMode runTime
-        Just _ -> log logLevel $ LogJobTimeout newJob
+        Nothing -> log logLevel $ LogJobFailed jobForNotification e failureMode runTime
+        Just _ -> log logLevel $ LogJobTimeout jobForNotification
 
       let tryHandler (JobErrHandler handler) res = case fromException e of
             Nothing -> res
-            Just e_ -> void $ handler e_ newJob failureMode
+            Just e_ -> void $ handler e_ jobForNotification failureMode
       handlers <- onJobFailed
       liftIO $ void $ Prelude.foldr tryHandler (throwIO e) handlers
-      pure ()
+
+    nextScheduledRunAt :: JobPeriod -> UTCTime -> UTCTime -> UTCTime
+    nextScheduledRunAt period startTime currentTime =
+      let periodTime = fromIntegral $ jobPeriodTime period
+      in case jobPeriodReschedulingPolicy period of
+          -- ReschedulingPolicyAtStart                 -> addUTCTime periodTime startTime
+          ReschedulingPolicyAtEnd                   -> addUTCTime periodTime startTime
+          ReschedulingPolicyAtEndExcludeRunningTime -> addUTCTime periodTime currentTime
 
 -- TODO: This might have a resource leak.
 restartUponCrash :: (HasJobRunner m, Show a) => Text -> m a -> m ()
@@ -446,7 +492,7 @@ restartUponCrash name_ action = do
     fn x = do
       case x of
         Left (e :: SomeException) -> log LevelError $ LogText $ name_ <> " seems to have exited with an error. Restarting: " <> toS (show e)
-        Right r -> log LevelError $ LogText $ name_ <> " seems to have exited with the folloing result: " <> toS (show r) <> ". Restaring."
+        Right r -> log LevelError $ LogText $ name_ <> " seems to have exited with the following result: " <> toS (show r) <> ". Restaring."
       restartUponCrash name_ action
 
 -- | Spawns 'jobPoller' and 'jobEventListener' in separate threads and restarts
@@ -470,8 +516,19 @@ jobMonitor = do
         liftIO $ Dir.removePathForcibly f
 
 -- | Ref: 'jobPoller'
+-- TODO: If we could know ahead of time of much the concurrency control would let us take, we could adjust the limit
 jobPollingSql :: Query
-jobPollingSql = "update ? set status = ?, locked_at = ?, locked_by = ?, attempts=attempts+1 WHERE id in (select id from ? where (run_at<=? AND ((status in ?) OR (status = ? and locked_at<?))) ORDER BY attempts ASC, run_at ASC LIMIT 1 FOR UPDATE) RETURNING id"
+jobPollingSql = [r|
+  update ?
+  set status = 'locked', locked_at = ?, locked_by = ?, attempts = attempts + 1
+  WHERE id in
+    (select id from ?
+      where (run_at <= ?) AND ((status in ?) OR (status = 'locked' and locked_at < ?))
+      ORDER BY attempts ASC, run_at ASC
+      LIMIT 1
+      FOR UPDATE)
+  RETURNING id
+  |]
 
 waitForJobs :: (HasJobRunner m)
             => m ()
@@ -525,18 +582,17 @@ jobPoller = do
     True -> do
       nextAction <- mask_ $ do
         log LevelDebug $ LogText $ toS $ "[" <> processName <> "] Polling the job queue.."
-        t <- liftIO getCurrentTime
-        r <- liftIO $
-             PGS.query pollerDbConn jobPollingSql
-             ( tname
-             , Locked
-             , t
-             , processName
-             , tname
-             , t
-             , (In [Queued, Retry])
-             , Locked
-             , (addUTCTime (fromIntegral $ negate $ unSeconds lockTimeout) t))
+        currentTime <- liftIO getCurrentTime
+        let timeoutTime = addUTCTime (fromIntegral $ negate $ unSeconds lockTimeout) currentTime
+        let args = ( tname
+                   , currentTime
+                   , processName
+                   , tname
+                   , currentTime
+                   , (In [Queued, Retry])
+                   , timeoutTime
+                   )
+        r <- liftIO $ PGS.query pollerDbConn jobPollingSql args
         case r of
           -- When we don't have any jobs to run, we can relax a bit...
           [] -> pure delayAction
@@ -610,7 +666,8 @@ jobEventListener = do
 
 
 createJobQuery :: PGS.Query
-createJobQuery = "INSERT INTO ? (run_at, status, payload, last_error, attempts, max_retries, locked_at, locked_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING " <> concatJobDbColumns
+createJobQuery = "INSERT INTO ? (run_at, status, payload, last_error, attempts, max_retries, period, rescheduling_policy, locked_at, locked_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING " <> concatJobDbColumns
+
 
 -- $createJobs
 --
@@ -628,10 +685,11 @@ createJob :: ToJSON p
           -> TableName
           -> p
           -> Maybe Int
+          -> Maybe JobPeriod
           -> IO Job
-createJob conn tname payload maxRetries = do
+createJob conn tname payload maxRetries period = do
   t <- getCurrentTime
-  scheduleJob conn tname payload t maxRetries
+  scheduleJob conn tname payload t maxRetries period
 
 -- | Create a job for execution at the given time.
 --
@@ -642,16 +700,28 @@ createJob conn tname payload maxRetries = do
 --    error of +/- 'cfgPollingInterval' seconds. Please do not expect very high
 --    accuracy of when the job is actually executed.
 scheduleJob :: ToJSON p
-            => Connection   -- ^ DB connection to use. __Note:__ This should
-                            -- /ideally/ come out of your application's DB pool,
-                            -- not the 'cfgDbPool' you used in the job-runner.
-            -> TableName    -- ^ DB-table which holds your jobs
-            -> p            -- ^ Job payload
-            -> UTCTime      -- ^ when should the job be executed
-            -> Maybe Int    -- ^ overrides the maximum number of retries for a job
+            => Connection      -- ^ DB connection to use. __Note:__ This should
+                               -- /ideally/ come out of your application's DB pool,
+                               -- not the 'cfgDbPool' you used in the job-runner.
+            -> TableName       -- ^ DB-table which holds your jobs
+            -> p               -- ^ Job payload
+            -> UTCTime         -- ^ when should the job be executed
+            -> Maybe Int       -- ^ overrides the maximum number of retries for a job
+            -> Maybe JobPeriod -- ^ repeat the job periodically
             -> IO Job
-scheduleJob conn tname payload runAt maxRetries = do
-  let args = ( tname, runAt, Queued, toJSON payload, Nothing :: Maybe Value, 0 :: Int, maxRetries, Nothing :: Maybe Text, Nothing :: Maybe Text )
+scheduleJob conn tname payload runAt maxRetries period = do
+  let args = ( tname
+             , runAt                                  -- run_at
+             , Queued                                 -- status
+             , toJSON payload                         -- payload
+             , Nothing :: Maybe Value                 -- last_error
+             , 0 :: Int                               -- attempts
+             , maxRetries                             -- max_retries
+             , jobPeriodTime <$> period               -- period
+             , jobPeriodReschedulingPolicy <$> period -- rescheduling_policy
+             , Nothing :: Maybe Text                  -- locked_at
+             , Nothing :: Maybe Text                  -- locked_by
+             )
       queryFormatter = toS <$> (PGS.formatQuery conn createJobQuery args)
   rs <- PGS.query conn createJobQuery args
   case rs of

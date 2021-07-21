@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 6677b61240c930d793f07c90cd9dc719586179d99bdc7dc7b3dbe9a32d9a2afa
+-- hash: 3078ad59b8763b6124306b2c120bcffa9b670df36ea7713830161878b84e66f3
 
 name:           odd-jobs
 version:        0.2.2
@@ -81,6 +81,7 @@ library
     , mtl
     , optparse-applicative
     , postgresql-simple
+    , raw-strings-qq
     , resource-pool
     , safe
     , servant
@@ -137,6 +138,7 @@ executable devel
     , odd-jobs
     , optparse-applicative
     , postgresql-simple
+    , raw-strings-qq
     , resource-pool
     , safe
     , servant
@@ -183,6 +185,7 @@ executable odd-jobs-cli-example
     , odd-jobs
     , optparse-applicative
     , postgresql-simple
+    , raw-strings-qq
     , resource-pool
     , safe
     , servant
@@ -245,6 +248,7 @@ test-suite jobrunner
     , optparse-applicative
     , postgresql-simple
     , random
+    , raw-strings-qq
     , resource-pool
     , safe
     , servant
@@ -260,6 +264,7 @@ test-suite jobrunner
     , text-conversions
     , time
     , timing-convenience
+    , tmp-postgres
     , unix
     , unliftio
     , unliftio-core

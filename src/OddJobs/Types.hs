@@ -37,7 +37,7 @@ import Control.Monad.Trans.Control (MonadBaseControl)
 -- myJobsTable :: TableName
 -- myJobsTable = "my_jobs"
 -- @
--- 
+--
 -- This should also work for table names qualified by the schema name. For example:
 --
 -- @
@@ -53,7 +53,8 @@ pgEventName :: TableName -> PGS.Identifier
 pgEventName (PGS.QualifiedIdentifier Nothing tname) = PGS.Identifier $ "jobs_created_" <> tname
 pgEventName (PGS.QualifiedIdentifier (Just schema) tname) = PGS.Identifier $ "jobs_created_" <> schema <> "_" <> tname
 
-newtype Seconds = Seconds { unSeconds :: Int } deriving (Eq, Show, Ord, Num, Read)
+newtype Seconds = Seconds { unSeconds :: Int }
+  deriving (Eq, Show, Ord, Enum, Num, Real, Integral, Read, ToJSON, FromJSON, ToField, FromField)
 
 -- | Convenience wrapper on-top of 'threadDelay' which takes 'Seconds' as an
 -- argument, instead of micro-seconds.
@@ -62,7 +63,6 @@ delaySeconds (Seconds s) = threadDelay $ oneSec * s
 
 oneSec :: Int
 oneSec = 1000000
-
 
 data LogEvent
   -- | Emitted when a job starts execution
@@ -173,21 +173,45 @@ instance FromJSON Status where
       Left e -> fail e
       Right r -> pure r
 
+data ReschedulingPolicy
+  -- | Reschedule job at {end time + period} after running the job.
+  -- Used for periodic jobs that must be started at a precise time interval but that cannot be run in concurrently.
+  -- This policy prevents the job from being started multiple times concurrently if it takes longer than the period.
+  -- Note that the job may be delayed if it take longer that the period.
+  -- Use a timeout shorter than the period to prevent that.
+  = ReschedulingPolicyAtEnd
+  -- | Reschedule at job end time + period.
+  -- Used for jobs that should have a constant waiting time between runs.
+  | ReschedulingPolicyAtEndExcludeRunningTime
+  deriving (Eq, Show, Generic, Enum, Bounded)
 
-newtype JobRunnerName = JobRunnerName { unJobRunnerName :: Text } deriving (Eq, Show, FromField, ToField, Generic, ToJSON, FromJSON)
+instance ToJSON ReschedulingPolicy where
+  toJSON s = toJSON $ toText s
+
+data JobPeriod = JobPeriod
+  { jobPeriodTime               :: Seconds            -- Job period
+  , jobPeriodReschedulingPolicy :: ReschedulingPolicy -- How to reschedule the job
+  }
+  deriving (Eq, Show, Generic)
+
+instance ToJSON JobPeriod where
+
+newtype JobRunnerName = JobRunnerName { unJobRunnerName :: Text }
+  deriving (Eq, Show, FromField, ToField, Generic, ToJSON, FromJSON)
 
 data Job = Job
-  { jobId :: JobId
-  , jobCreatedAt :: UTCTime
-  , jobUpdatedAt :: UTCTime
-  , jobRunAt :: UTCTime
-  , jobStatus :: Status
-  , jobPayload :: Aeson.Value
-  , jobLastError :: Maybe Value
-  , jobAttempts :: Int
-  , jobMaxRetries :: Maybe Int
-  , jobLockedAt :: Maybe UTCTime
-  , jobLockedBy :: Maybe JobRunnerName
+  { jobId         :: JobId                -- database ID
+  , jobCreatedAt  :: UTCTime              -- creation time
+  , jobUpdatedAt  :: UTCTime              -- last update time
+  , jobRunAt      :: UTCTime              -- time to run
+  , jobStatus     :: Status               -- current status
+  , jobPayload    :: Aeson.Value          -- payload
+  , jobLastError  :: Maybe Value          -- last error
+  , jobAttempts   :: Int                  -- current attempt number
+  , jobMaxRetries :: Maybe Int            -- maximum attempt
+  , jobLockedAt   :: Maybe UTCTime        -- time the job was locked (and started)
+  , jobLockedBy   :: Maybe JobRunnerName  -- name of the process that's running the job
+  , jobPeriod     :: Maybe JobPeriod      -- for periodic jobs, the job period
   } deriving (Eq, Show, Generic)
 
 instance ToText Status where
@@ -215,19 +239,44 @@ instance FromField Status where
 instance ToField Status where
   toField s = toField $ toText s
 
+instance ToText ReschedulingPolicy where
+  toText s = case s of
+    ReschedulingPolicyAtEnd                   -> "reschedule_at_end"
+    ReschedulingPolicyAtEndExcludeRunningTime -> "reschedule_at_start_exclude_running_time"
+
+instance (StringConv Text a) => FromText (Either a ReschedulingPolicy) where
+  fromText t = case t of
+    "reschedule_at_end"                        -> Right ReschedulingPolicyAtEnd
+    "reschedule_at_start_exclude_running_time" -> Right ReschedulingPolicyAtEndExcludeRunningTime
+    x -> Left $ toS $ "Unknown rescheduling policy: " <> x
+
+instance FromField ReschedulingPolicy where
+  fromField f mBS = (fromText <$> (fromField f mBS)) >>= \case
+    Left e -> FromField.returnError PGS.ConversionFailed f e
+    Right s -> pure s
+
+instance ToField ReschedulingPolicy where
+  toField s = toField $ toText s
+
 instance FromRow Job where
-  fromRow = Job
-    <$> field -- jobId
-    <*> field -- createdAt
-    <*> field -- updatedAt
-    <*> field -- runAt
-    <*> field -- status
-    <*> field -- payload
-    <*> field -- lastError
-    <*> field -- attempts
-    <*> field -- retries
-    <*> field -- lockedAt
-    <*> field -- lockedBy
+  fromRow = do
+    job <- Job
+      <$> field -- jobId
+      <*> field -- createdAt
+      <*> field -- updatedAt
+      <*> field -- runAt
+      <*> field -- status
+      <*> field -- payload
+      <*> field -- lastError
+      <*> field -- attempts
+      <*> field -- retries
+      <*> field -- lockedAt
+      <*> field -- lockedBy
+    period <- field -- period
+    rescheduling <- field -- rescheduling policy
+
+    let jobPeriod = JobPeriod <$> period <*> rescheduling
+    pure $ job jobPeriod
 
 -- TODO: Add a sum-type for return status which can signal the monitor about
 -- whether the job needs to be retried, marked successfull, or whether it has
