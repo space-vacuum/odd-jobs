@@ -13,7 +13,7 @@ jobs:
       ACTIONS_ALLOW_UNSECURE_COMMANDS: true
     strategy:
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-20.04]
         stack: ["2.3.3"]
         ghc: ["8.8.3"]
 
@@ -39,7 +39,8 @@ jobs:
 
     - name: Install Dependencies
       run: |
-        sudo apt-get install postgresql
+        sudo apt-get install postgresql-12
+        echo "export PATH=$PATH:/usr/lib/postgresql/12/bin/" >> /home/ubuntu/.bashrc
 
     - uses: actions/checkout@v2
 
