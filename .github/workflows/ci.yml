@@ -42,7 +42,7 @@ jobs:
         sudo apt-get install postgresql
         sudo su - postgres
         echo "export PATH=$PATH:/usr/lib/postgresql/12/bin/" >> ~/.bashrc
-        initdb
+        find / -name initdb
 
     - uses: actions/checkout@v2
 
