@@ -39,9 +39,11 @@ jobs:
 
     - name: Install Dependencies
       run: |
-        echo "export PATH=$PATH:/usr/lib/postgresql/12/bin/" >> ~/.bashrc;
-        initdb
+        sudo apt-get install postgresql;
 
+        echo "export PATH=$PATH:/usr/lib/postgresql/12/bin/" >> ~/.bashrc;
+
+        initdb;
         cat ~/.bashrc;
         ls -al;
         pwd;
@@ -49,7 +51,6 @@ jobs:
         cd ~;
         ls -al;
         pwd;
-        sudo apt-get install postgresql;
 
     - uses: actions/checkout@v2
 
