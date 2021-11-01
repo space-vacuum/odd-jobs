@@ -33,6 +33,8 @@ import OddJobs.Cli (defaultMain)
 import System.Log.FastLogger(withTimedFastLogger, LogType'(..), defaultBufSize)
 import System.Log.FastLogger.Date (newTimeCache, simpleTimeFormat)
 
+import Data.Pool (withResource)
+
 import Data.Text (Text)
 import Data.Aeson as Aeson
 import GHC.Generics
@@ -109,7 +111,7 @@ main = do
           -- `OddJobs.ConfigBuilder`. If you want to actually use
           -- structured-logging you'll need to define your own logging function.
           let jobLogger = defaultTimedLogger logger (defaultLogStr defaultJobType)
-              cfg = mkConfig jobLogger "jobs" dbPool (MaxConcurrentJobs 50) myJobRunner Prelude.id
+              cfg = mkConfig jobLogger "jobs" (withResource dbPool) (MaxConcurrentJobs 50) myJobRunner Prelude.id
 
           -- Finally, executing the callback function that was passed to me...
           callback cfg

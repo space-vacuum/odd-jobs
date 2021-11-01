@@ -36,7 +36,7 @@ mkConfig :: (LogLevel -> LogEvent -> IO ())
          -- ^ "Structured logging" function. Ref: 'cfgLogger'
          -> TableName
          -- ^ DB table which holds your jobs. Ref: 'cfgTableName'
-         -> DbConnectionProvider
+         -> (forall b. (Connection -> IO b) -> IO b)
          -- ^ How job-runner with get DB connections to be use. Ref: 'cfgDbConnProvider'
          -> ConcurrencyControl
          -- ^ Concurrency configuration. Ref: 'cfgConcurrencyControl'
@@ -233,15 +233,15 @@ defaultJobType Job{jobPayload} =
 defaultPollingInterval :: Seconds
 defaultPollingInterval = Seconds 5
 
--- | Convenience function to create a DB connection provider, backed by a
--- connection-pool with some sensible defaults. Please see the source-code
+-- | Convenience function to create a DB connection pool, backed by a
+-- resource-pool with some sensible defaults. Please see the source-code
 -- of this function to understand what it's doing.
 withConnectionPool :: (MonadUnliftIO m)
                    => Either BS.ByteString PGS.ConnectInfo
-                   -> (DbConnectionProvider -> m a)
+                   -> (Pool Connection -> m a)
                    -> m a
 withConnectionPool connConfig action = withRunInIO $ \runInIO -> do
-  bracket poolCreator destroyAllResources (runInIO . action . PoolingConnectionProvider)
+  bracket poolCreator destroyAllResources (runInIO . action)
   where
     poolCreator = liftIO $
       case connConfig of
