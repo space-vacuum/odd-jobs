@@ -62,8 +62,6 @@ module OddJobs.Job
   , concatJobDbColumns
   , fetchAllJobTypes
   , fetchAllJobRunners
-  , withDbConnection
-  , withDbConnection'
 
   -- * JSON helpers
   --
@@ -134,7 +132,7 @@ class (MonadUnliftIO m, MonadBaseControl IO m) => HasJobRunner m where
   onJobSuccess :: Job -> m ()
   onJobFailed :: forall a . m [JobErrHandler a]
   getJobRunner :: m (Job -> IO ())
-  getDbConnProvider :: m DbConnectionProvider
+  withDbConnection :: forall b. (Connection -> m b) -> m b
   getTableName :: m TableName
   onJobStart :: Job -> m ()
   getDefaultMaxAttempts :: m Int
@@ -175,7 +173,9 @@ instance HasJobRunner RunnerM where
     fn <- cfgOnJobSuccess . envConfig <$> ask
     logCallbackErrors (jobId job) "onJobSuccess" $ liftIO $ fn job
   getJobRunner = cfgJobRunner . envConfig <$> ask
-  getDbConnProvider = cfgDbConnProvider . envConfig <$> ask
+  withDbConnection k = do
+    f <- cfgDbConnProvider . envConfig <$> ask
+    withRunInIO (\runInIO -> f (runInIO . k))
   getTableName = cfgTableName . envConfig <$> ask
   onJobStart job = do
     fn <- cfgOnJobStart . envConfig <$> ask
@@ -251,25 +251,6 @@ concatJobDbColumns = concatJobDbColumns_ jobDbColumns ""
 findJobByIdQuery :: TableName -> PGS.Query
 findJobByIdQuery tname = "SELECT " <> concatJobDbColumns <> " FROM " <> tname <> " WHERE id = ?"
 
-withDbConnection :: (HasJobRunner m)
-                 => (Connection -> m a)
-                 -> m a
-withDbConnection action = do
-  dbConnProvider <- getDbConnProvider
-  withDbConnection' dbConnProvider action
-
-withDbConnection' :: (MonadUnliftIO m, MonadBaseControl IO m, MonadIO m)
-                  => DbConnectionProvider
-                  -> (Connection -> m a)
-                  -> m a
-withDbConnection' connProv action = case connProv of
-  OnDemandConnectionProvider connect close -> do
-    bracket (liftIO connect) (liftIO . close) action
-
-  PoolingConnectionProvider pgPool ->
-    withResource pgPool action
-
---
 -- $dbHelpers
 --
 -- A bunch of functions that help you query 'cfgTableName' and change the status
@@ -686,7 +667,7 @@ fetchAllJobTypes :: (MonadIO m)
 fetchAllJobTypes Config{cfgAllJobTypes, cfgDbConnProvider} = liftIO $ do
   case cfgAllJobTypes of
     AJTFixed jts -> pure jts
-    AJTSql fn -> withDbConnection' cfgDbConnProvider fn
+    AJTSql fn -> cfgDbConnProvider fn
     AJTCustom fn -> fn
 
 -- | Used by web\/admin IO to fetch a \"master list\" of all known job-runners.
@@ -698,6 +679,6 @@ fetchAllJobTypes Config{cfgAllJobTypes, cfgDbConnProvider} = liftIO $ do
 fetchAllJobRunners :: (MonadIO m)
                    => Config
                    -> m [JobRunnerName]
-fetchAllJobRunners Config{cfgTableName, cfgDbConnProvider} = liftIO $ withDbConnection' cfgDbConnProvider $ \conn -> do
+fetchAllJobRunners Config{cfgTableName, cfgDbConnProvider} = liftIO $ cfgDbConnProvider $ \conn -> do
   fmap (mapMaybe fromOnly) $ PGS.query_ conn $ "select distinct locked_by from " <> cfgTableName
 

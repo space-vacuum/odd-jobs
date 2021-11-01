@@ -151,7 +151,7 @@ cancelJob :: Config
           -> JobId
           -> Handler NoContent
 cancelJob Config{..} env jid = do
-  liftIO $ withDbConnection' cfgDbConnProvider $ \conn -> void $ cancelJobIO conn cfgTableName jid
+  liftIO $ cfgDbConnProvider $ \conn -> void $ cancelJobIO conn cfgTableName jid
   redirectToHome env
 
 runJobNow :: Config
@@ -159,7 +159,7 @@ runJobNow :: Config
           -> JobId
           -> Handler NoContent
 runJobNow Config{..} env jid = do
-  liftIO $ withDbConnection' cfgDbConnProvider $ \conn -> void $ runJobNowIO conn cfgTableName jid
+  liftIO $ cfgDbConnProvider $ \conn -> void $ runJobNowIO conn cfgTableName jid
   redirectToHome env
 
 enqueueJob :: Config
@@ -167,7 +167,7 @@ enqueueJob :: Config
            -> JobId
            -> Handler NoContent
 enqueueJob Config{..} env jid = do
-  liftIO $ withDbConnection' cfgDbConnProvider $ \conn -> do
+  liftIO $ cfgDbConnProvider $ \conn -> do
     void $ unlockJobIO conn cfgTableName jid
     void $ runJobNowIO conn cfgTableName jid
   redirectToHome env
@@ -183,7 +183,7 @@ filterResults :: Config
               -> Handler (Html ())
 filterResults cfg@Config{cfgJobToHtml, cfgDbConnProvider} Env{..}  mFilter = do
   let filters = fromMaybe mempty mFilter
-  (jobs, runningCount) <- liftIO $ withDbConnection' cfgDbConnProvider $ \conn -> (,)
+  (jobs, runningCount) <- liftIO $ cfgDbConnProvider $ \conn -> (,)
     <$> (filterJobs cfg conn filters)
     <*> (countJobs cfg conn filters{ filterStatuses = [Job.Locked] })
   t <- liftIO getCurrentTime
