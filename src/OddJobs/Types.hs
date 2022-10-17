@@ -248,6 +248,16 @@ data AllJobTypes
   -- | A custom 'IO' action for fetching the list of job-types.
   | AJTCustom (IO [Text])
 
+type DbConnectionPool = Pool Connection
+type DbConnectionProvider = forall a. (Connection -> IO a) -> IO a
+
+-- | Ref: 'cfgDbPool'
+data ConfigConnectionPool
+  -- | DB connection-pool to use.
+  = ConnectionPool DbConnectionPool
+  -- | A function providing a DB connection.
+  | ConnectionProvider DbConnectionProvider
+
 -- | While odd-jobs is highly configurable and the 'Config' data-type might seem
 -- daunting at first, it is not necessary to tweak every single configuration
 -- parameter by hand.
@@ -287,7 +297,7 @@ data Config = Config
     -- connection-pool for them. This pool will be used ONLY for monitoring jobs
     -- and changing their status. We need to have __at least 4 connections__ in
     -- this connection-pool for the job-runner to work as expected.
-  , cfgDbPool :: Pool Connection
+  , cfgDbPool :: ConfigConnectionPool
 
     -- | How frequently should the 'jobPoller' check for jobs where the Job's
     -- 'jobRunAt' field indicates that it's time for the job to be executed.
@@ -359,7 +369,7 @@ data UIConfig = UIConfig
     -- DB pool to be used only by the web UI (this DB pool can have just 1-3
     -- connection, because __typically__ the web UI doesn't serve too many
     -- concurrent user in most real-life cases)
-  , uicfgDbPool :: Pool Connection
+  , uicfgDbPool :: ConfigConnectionPool
 
     -- | How to extract the "job type" from a 'Job'. If you are overriding this,
     -- please consider overriding 'cfgJobTypeSql' as well. __Note:__ Usually

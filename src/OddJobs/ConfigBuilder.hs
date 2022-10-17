@@ -45,8 +45,7 @@ mkConfig :: (LogLevel -> LogEvent -> IO ())
          -- ^ "Structured logging" function. Ref: 'cfgLogger'
          -> TableName
          -- ^ DB table which holds your jobs. Ref: 'cfgTableName'
-         -> Pool Connection
-         -- ^ DB connection-pool to be used by job-runner. Ref: 'cfgDbPool'
+         -> ConfigConnectionPool
          -> ConcurrencyControl
          -- ^ Concurrency configuration. Ref: 'cfgConcurrencyControl'
          -> (Job -> IO ())
@@ -63,14 +62,14 @@ mkConfig :: (LogLevel -> LogEvent -> IO ())
          -- function, unless you know what you're doing.
          -> Config
          -- ^ The final 'Config' that can be used to start various job-runners
-mkConfig logger tname dbpool ccControl jrunner configOverridesFn =
+mkConfig logger tname pool ccControl jrunner configOverridesFn =
   let cfg = configOverridesFn $ Config
             { cfgPollingInterval = defaultPollingInterval
             , cfgOnJobSuccess = (const $ pure ())
             , cfgOnJobFailed = []
             , cfgJobRunner = jrunner
             , cfgLogger = logger
-            , cfgDbPool = dbpool
+            , cfgDbPool = pool
             , cfgOnJobStart = (const $ pure ())
             , cfgDefaultMaxAttempts = 10
             , cfgTableName = tname
@@ -88,7 +87,7 @@ mkUIConfig :: (LogLevel -> LogEvent -> IO ())
            -- ^ "Structured logging" function. Ref: 'uicfgLogger'
            -> TableName
            -- ^ DB table which holds your jobs. Ref: 'uicfgTableName'
-           -> Pool Connection
+           -> ConfigConnectionPool
            -- ^ DB connection-pool to be used by web UI. Ref: 'uicfgDbPool'
            -> (UIConfig -> UIConfig)
            -- ^ A function that allows you to modify the \"interim UI config\".

@@ -25,7 +25,7 @@ Ideally, this module should be compiled into a separate executable and should de
 
 module OddJobsCliExample where
 
-import OddJobs.Job (Job(..),  ConcurrencyControl(..), Config(..), throwParsePayload, startJobRunner, LogLevel(..), LogEvent(..))
+import OddJobs.Job (Job(..),  ConcurrencyControl(..), Config(..), throwParsePayload, startJobRunner, LogLevel(..), LogEvent(..), withPoolConfig)
 import OddJobs.ConfigBuilder (mkConfig, withConnectionPool, defaultTimedLogger, defaultLogStr, defaultJobType, mkUIConfig)
 import OddJobs.Cli (runCli, defaultWebUI, CliType(..))
 
@@ -41,7 +41,7 @@ import GHC.Generics
 
 -- This example is using these functions to introduce an artificial delay of a
 -- few seconds in one of the jobs. Otherwise it is not really needed.
-import OddJobs.Types (delaySeconds, Seconds(..))
+import OddJobs.Types (delaySeconds, Seconds(..), ConfigConnectionPool(..))
 \end{code} 
 
 === 3. Set-up a Haskell type to represent your job-payload
@@ -97,7 +97,7 @@ main = runCli CliBoth{..}
         withTimedFastLogger tcache (LogFileNoRotate "oddjobs.log" defaultBufSize) $ \logger -> do
           let jobLogger = defaultTimedLogger logger (defaultLogStr defaultJobType)
           startJobRunner $
-            mkConfig jobLogger "jobs" dbPool (MaxConcurrentJobs 50) myJobRunner cfgOverrideFn
+            mkConfig jobLogger "jobs" (ConnectionPool dbPool) (MaxConcurrentJobs 50) myJobRunner cfgOverrideFn
 
     cliStartWebUI uiStartArgs cfgOverrideFn = do
       withConnectionPool (Left "dbname=jobs_test user=jobs_test password=jobs_test host=localhost")$ \dbPool -> do
@@ -105,7 +105,7 @@ main = runCli CliBoth{..}
         withTimedFastLogger tcache (LogFileNoRotate "oddjobs-web.log" defaultBufSize) $ \logger -> do
           let jobLogger = defaultTimedLogger logger (defaultLogStr defaultJobType)
           defaultWebUI uiStartArgs $
-            mkUIConfig jobLogger "jobs" dbPool cfgOverrideFn
+            mkUIConfig jobLogger "jobs" (ConnectionPool dbPool) cfgOverrideFn
 \end{code}
 
 === 6. Compile and start the Odd Jobs runner

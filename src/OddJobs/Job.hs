@@ -47,6 +47,7 @@ module OddJobs.Job
   , jobEventListener
   , jobPoller
   , jobPollingSql
+  , withPoolConfig
   , JobRunner
   , HasJobRunner (..)
 
@@ -135,7 +136,7 @@ class (MonadUnliftIO m, MonadBaseControl IO m) => HasJobRunner m where
   deleteSuccessfulJobs :: m Bool
   onJobFailed :: m [JobErrHandler]
   getJobRunner :: m (Job -> IO ())
-  getDbPool :: m (Pool Connection)
+  withDbConnection :: forall b. (Connection -> m b) -> m b
   getTableName :: m TableName
   onJobStart :: Job -> m ()
   getDefaultMaxAttempts :: m Int
@@ -157,6 +158,10 @@ class (MonadUnliftIO m, MonadBaseControl IO m) => HasJobRunner m where
 -- write your own function, as well).
 --
 
+withPoolConfig :: MonadUnliftIO m => ConfigConnectionPool -> (Connection -> m b) -> m b
+withPoolConfig cfgPool k = withRunInIO $ \runInIO -> case cfgPool of
+  ConnectionProvider f -> f (runInIO . k)
+  ConnectionPool pool -> Pool.withResource pool (runInIO . k)
 
 data RunnerEnv = RunnerEnv
   { envConfig :: !Config
@@ -177,7 +182,11 @@ instance HasJobRunner RunnerM where
   deleteSuccessfulJobs = cfgDeleteSuccessfulJobs . envConfig <$> ask
 
   getJobRunner = cfgJobRunner . envConfig <$> ask
-  getDbPool = cfgDbPool . envConfig <$> ask
+
+  withDbConnection k = do
+    poolConfig <- cfgDbPool . envConfig <$> ask
+    withPoolConfig poolConfig k
+
   getTableName = cfgTableName . envConfig <$> ask
   onJobStart job = do
     fn <- cfgOnJobStart . envConfig <$> ask
@@ -255,17 +264,6 @@ concatJobDbColumns = concatJobDbColumns_ jobDbColumns ""
 
 findJobByIdQuery :: PGS.Query
 findJobByIdQuery = "SELECT " <> concatJobDbColumns <> " FROM ? WHERE id = ?"
-
-withResource :: MonadUnliftIO m => Pool a -> (a -> m b) -> m b
-withResource pool fa =
-  withRunInIO $ \runInIO -> Pool.withResource pool (runInIO . fa)
-
-withDbConnection :: (HasJobRunner m)
-                 => (Connection -> m a)
-                 -> m a
-withDbConnection action = do
-  pool <- getDbPool
-  withResource pool action
 
 --
 -- $dbHelpers
@@ -527,13 +525,12 @@ jobPollingIO pollerDbConn processName tname lockTimeout = do
 jobPoller :: (HasJobRunner m) => m ()
 jobPoller = do
   processName <- liftIO jobWorkerName
-  pool <- getDbPool
   tname <- getTableName
   lockTimeout <- getDefaultJobTimeout
   traceM "jobPoller just before log statement"
   log LevelInfo $ LogText $ toS $ "Starting the job monitor via DB polling with processName=" <> processName
   concurrencyControlFn <- getConcurrencyControlFn
-  withResource pool $ \pollerDbConn -> forever $ concurrencyControlFn >>= \case
+  withDbConnection $ \pollerDbConn -> forever $ concurrencyControlFn >>= \case
     False -> do
       log LevelWarn $ LogText $ "NOT polling the job queue due to concurrency control"
       -- If we can't run any jobs ATM, relax and wait for resources to free up
@@ -563,7 +560,6 @@ jobEventListener :: (HasJobRunner m)
                  => m ()
 jobEventListener = do
   log LevelInfo $ LogText "Starting the job monitor via LISTEN/NOTIFY..."
-  pool <- getDbPool
   tname <- getTableName
   jwName <- liftIO jobWorkerName
   concurrencyControlFn <- getConcurrencyControlFn
@@ -577,7 +573,7 @@ jobEventListener = do
           [Only (_ :: JobId)] -> pure $ Just jid
           x -> error $ "WTF just happned? Was expecting a single row to be returned, received " ++ (show x)
 
-  withResource pool $ \monitorDbConn -> do
+  withDbConnection $ \monitorDbConn -> do
     void $ liftIO $ PGS.execute monitorDbConn ("LISTEN ?") (Only $ pgEventName tname)
     forever $ do
       log LevelDebug $ LogText "[LISTEN/NOTIFY] Event loop"
@@ -697,13 +693,11 @@ throwParsePayloadWith parser job =
 
 -- | Used by the web\/admin UI to fetch a \"master list\" of all known
 -- job-types. Ref: 'cfgAllJobTypes'
-fetchAllJobTypes :: (MonadIO m)
-                 => UIConfig
-                 -> m [Text]
+fetchAllJobTypes :: (MonadIO m) => UIConfig -> m [Text]
 fetchAllJobTypes UIConfig{uicfgAllJobTypes, uicfgDbPool} = liftIO $ do
   case uicfgAllJobTypes of
     AJTFixed jts -> pure jts
-    AJTSql fn -> withResource uicfgDbPool fn
+    AJTSql fn -> withPoolConfig uicfgDbPool fn
     AJTCustom fn -> fn
 
 -- | Used by web\/admin IO to fetch a \"master list\" of all known job-runners.
@@ -712,9 +706,7 @@ fetchAllJobTypes UIConfig{uicfgAllJobTypes, uicfgDbPool} = liftIO $ do
 --   * Since this looks at the 'jobLockedBy' column of 'cfgTableName', it will
 --     discover only those job-runners that are actively executing at least one
 --     job at the time this function is executed.
-fetchAllJobRunners :: (MonadIO m)
-                   => UIConfig
-                   -> m [JobRunnerName]
-fetchAllJobRunners UIConfig{uicfgTableName, uicfgDbPool} = liftIO $ withResource uicfgDbPool $ \conn -> do
+fetchAllJobRunners :: (MonadIO m) => UIConfig -> m [JobRunnerName]
+fetchAllJobRunners UIConfig{uicfgTableName, uicfgDbPool} = liftIO $ withPoolConfig uicfgDbPool $ \conn -> do
   fmap (mapMaybe fromOnly) $ PGS.query conn "select distinct locked_by from ?" (Only uicfgTableName)
 

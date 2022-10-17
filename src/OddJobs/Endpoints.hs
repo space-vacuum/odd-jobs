@@ -44,6 +44,7 @@ import qualified Data.List as DL
 import UnliftIO.IORef
 import Debug.Trace
 import qualified OddJobs.ConfigBuilder as Builder
+import OddJobs.Job (withPoolConfig)
 import Servant.Static.TH (createApiAndServerDecs)
 
 -- startApp :: IO ()
@@ -152,7 +153,7 @@ cancelJob :: UIConfig
           -> JobId
           -> Handler NoContent
 cancelJob UIConfig{..} env jid = do
-  liftIO $ withResource uicfgDbPool $ \conn -> void $ cancelJobIO conn uicfgTableName jid
+  liftIO $ withPoolConfig uicfgDbPool $ \conn -> void $ cancelJobIO conn uicfgTableName jid
   redirectToHome env
 
 runJobNow :: UIConfig
@@ -160,7 +161,7 @@ runJobNow :: UIConfig
           -> JobId
           -> Handler NoContent
 runJobNow UIConfig{..} env jid = do
-  liftIO $ withResource uicfgDbPool $ \conn -> void $ runJobNowIO conn uicfgTableName jid
+  liftIO $ withPoolConfig uicfgDbPool $ \conn -> void $ runJobNowIO conn uicfgTableName jid
   redirectToHome env
 
 enqueueJob :: UIConfig
@@ -168,7 +169,7 @@ enqueueJob :: UIConfig
            -> JobId
            -> Handler NoContent
 enqueueJob UIConfig{..} env jid = do
-  liftIO $ withResource uicfgDbPool $ \conn -> do
+  liftIO $ withPoolConfig uicfgDbPool $ \conn -> do
     void $ unlockJobIO conn uicfgTableName jid
     void $ runJobNowIO conn uicfgTableName jid
   redirectToHome env
@@ -184,7 +185,7 @@ filterResults :: UIConfig
               -> Handler (Html ())
 filterResults cfg@UIConfig{uicfgJobToHtml, uicfgDbPool} Env{..}  mFilter = do
   let filters = fromMaybe mempty mFilter
-  (jobs, runningCount) <- liftIO $ Pool.withResource uicfgDbPool $ \conn -> (,)
+  (jobs, runningCount) <- liftIO $ withPoolConfig uicfgDbPool $ \conn -> (,)
     <$> (filterJobs cfg conn filters)
     <*> (countJobs cfg conn filters{ filterStatuses = [Job.Locked] })
   t <- liftIO getCurrentTime

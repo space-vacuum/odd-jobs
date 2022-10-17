@@ -42,6 +42,8 @@ import Data.Maybe (fromMaybe)
 import qualified OddJobs.ConfigBuilder as Job
 import UnliftIO
 import Control.Exception (ArithException)
+import OddJobs.Types (ConfigConnectionPool(..))
+import OddJobs.Job (withPoolConfig)
 
 $(Aeson.deriveJSON Aeson.defaultOptions ''Seconds)
 
@@ -49,7 +51,10 @@ main :: IO ()
 main = do
   bracket createAppPool destroyAllResources $ \appPool -> do
     bracket createJobPool destroyAllResources $ \jobPool -> do
-      defaultMain $ tests appPool jobPool
+      defaultMain $ testGroup "provider & pool tests"
+        [ tests "simple tests (provider)" appPool (ConnectionProvider $ Pool.withResource jobPool)
+        , tests "simple tests (pool)" appPool (ConnectionPool jobPool)
+        ]
   where
     connInfo = ConnectInfo
                  { connectHost = "localhost"
@@ -72,17 +77,17 @@ main = do
       (fromRational 10)       -- number of seconds unused resources are kept around
       45
 
-tests appPool jobPool = testGroup "All tests"
+tests title appPool jobPool = testGroup "All tests"
   [
-    testGroup "simple tests" [ testJobCreation appPool jobPool
-                             , testJobScheduling appPool jobPool
-                             , testJobFailure appPool jobPool
-                             , testEnsureShutdown appPool jobPool
-                             , testGracefulShutdown appPool jobPool
-                             , testJobErrHandler appPool jobPool
-                             , testPushFailedJobEndQueue jobPool
-                             , testRetryBackoff appPool jobPool
-                             ]
+    testGroup title [ testJobCreation appPool jobPool
+                    , testJobScheduling appPool jobPool
+                    , testJobFailure appPool jobPool
+                    , testEnsureShutdown appPool jobPool
+                    , testGracefulShutdown appPool jobPool
+                    , testJobErrHandler appPool jobPool
+                    , testPushFailedJobEndQueue jobPool
+                    , testRetryBackoff appPool jobPool
+                    ]
   -- , testGroup "property tests" [ testEverything appPool jobPool
   --                              -- , propFilterJobs appPool jobPool
   --                              ]
@@ -219,8 +224,8 @@ ensureJobId conn tname jid = Job.findJobByIdIO conn tname jid >>= \case
 withRandomTable jobPool action = do
   (tname :: Job.TableName) <- liftIO ((fromString . ("jobs_" <>)) <$> (replicateM 10 (R.randomRIO ('a', 'z'))))
   finally
-    ((Pool.withResource jobPool $ \conn -> (liftIO $ Migrations.createJobTable conn tname)) >> (action tname))
-    (Pool.withResource jobPool $ \conn -> liftIO $ void $ PGS.execute conn "drop table if exists ?" (Only tname))
+    ((withPoolConfig jobPool $ \conn -> (liftIO $ Migrations.createJobTable conn tname)) >> (action tname))
+    (withPoolConfig jobPool $ \conn -> liftIO $ void $ PGS.execute conn "drop table if exists ?" (Only tname))
 
 testMaxAttempts :: Int
 testMaxAttempts = 3
@@ -327,10 +332,9 @@ testJobFailure appPool jobPool = testCase "job failure" $ do
       assertEqual ("Expecting job attempts to be 3. Found " <> show jobAttempts)  3 jobAttempts
 
 
-testPushFailedJobEndQueue ::  Pool Connection -> TestTree
 testPushFailedJobEndQueue jobPool = testCase "testPushFailedJobEndQueue" $ do
   withRandomTable jobPool $ \tname -> do
-    Pool.withResource jobPool $ \conn -> do
+    withPoolConfig jobPool $ \conn -> do
       job1 <- Job.createJob conn tname (PayloadAlwaysFail 0)
       job2 <- Job.createJob conn tname (PayloadAlwaysFail 0)
       Job.saveJobIO conn tname (job1 {jobAttempts = 1})
