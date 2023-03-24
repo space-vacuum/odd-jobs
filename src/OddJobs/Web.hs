@@ -1,4 +1,11 @@
-{-# LANGUAGE DeriveGeneric, NamedFieldPuns, TypeOperators, DataKinds, RecordWildCards, DeriveAnyClass #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE ViewPatterns #-}
+
 module OddJobs.Web where
 
 import OddJobs.Types
@@ -6,6 +13,7 @@ import OddJobs.Job as Job
 import Data.Time
 import Data.Aeson as Aeson
 import qualified Data.Text as T
+import Data.Aeson.Shim (bwd)
 import Data.Text (Text)
 import GHC.Generics hiding (from, to)
 import Database.PostgreSQL.Simple as PGS
@@ -366,7 +374,7 @@ showText a = toS $ show a
 
 jobContent :: Value -> Value
 jobContent v = case v of
-  Aeson.Object o -> case HM.lookup "contents" o of
+  Aeson.Object (bwd -> o) -> case HM.lookup "contents" o of
     Nothing -> v
     Just c -> c
   _ -> v

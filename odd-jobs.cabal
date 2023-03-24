@@ -1,4 +1,4 @@
-cabal-version: 1.12
+cabal-version: 3.0
 
 -- This file has been generated from package.yaml by hpack version 0.33.0.
 --
@@ -23,7 +23,7 @@ bug-reports:    https://github.com/saurabhnanda/odd-jobs/issues
 author:         Saurabh Nanda
 maintainer:     saurabhnanda@gmail.com
 copyright:      2016-2020 Saurabh Nanda
-license:        BSD3
+license:        BSD-3-Clause
 license-file:   LICENSE
 build-type:     Simple
 extra-source-files:
@@ -47,7 +47,15 @@ extra-source-files:
     assets/js/logo-slider.js
     assets/odd-jobs-color-logo.png
 
+common aeson-shim
+  if impl(ghc <9)
+    build-depends: aeson <1.6
+
+  else
+    build-depends: aeson >=2
+
 library
+  import: aeson-shim
   exposed-modules:
       OddJobs.Job
       OddJobs.Migrations
@@ -58,14 +66,14 @@ library
       OddJobs.ConfigBuilder
   other-modules:
       UI
+      Data.Aeson.Shim
       Paths_odd_jobs
   hs-source-dirs:
       src
   default-extensions: NamedFieldPuns LambdaCase TemplateHaskell ScopedTypeVariables GeneralizedNewtypeDeriving QuasiQuotes OverloadedStrings
   ghc-options: -Wall -fno-warn-orphans -fno-warn-unused-imports -fno-warn-dodgy-exports -Werror=missing-fields -Werror=incomplete-patterns
   build-depends:
-      aeson
-    , base >=4.7 && <5
+      base >=4.7 && <5
     , bytestring
     , direct-daemonize
     , directory
@@ -98,9 +106,11 @@ library
     , unordered-containers
     , wai
     , warp
+
   default-language: Haskell2010
 
 executable devel
+  import: aeson-shim
   main-is: DevelMain.hs
   other-modules:
       OddJobs.Cli
@@ -118,8 +128,7 @@ executable devel
   default-extensions: NamedFieldPuns LambdaCase TemplateHaskell ScopedTypeVariables GeneralizedNewtypeDeriving QuasiQuotes OverloadedStrings
   ghc-options: -Wall -fno-warn-orphans -fno-warn-unused-imports -fno-warn-dodgy-exports -Werror=missing-fields -Werror=incomplete-patterns -threaded -with-rtsopts=-N -main-is DevelMain
   build-depends:
-      aeson
-    , base >=4.7 && <5
+      base >=4.7 && <5
     , bytestring
     , direct-daemonize
     , directory
@@ -157,6 +166,7 @@ executable devel
   default-language: Haskell2010
 
 executable odd-jobs-cli-example
+  import: aeson-shim
   main-is: OddJobsCliExample.lhs
   other-modules:
       Paths_odd_jobs
@@ -165,7 +175,6 @@ executable odd-jobs-cli-example
   default-extensions: NamedFieldPuns LambdaCase TemplateHaskell ScopedTypeVariables GeneralizedNewtypeDeriving QuasiQuotes OverloadedStrings
   ghc-options: -Wall -fno-warn-orphans -fno-warn-unused-imports -fno-warn-dodgy-exports -Werror=missing-fields -Werror=incomplete-patterns -threaded -with-rtsopts=-N -main-is OddJobsCliExample
   build-depends:
-      aeson
     , base >=4.7 && <5
     , bytestring
     , direct-daemonize
@@ -203,6 +212,7 @@ executable odd-jobs-cli-example
   default-language: Haskell2010
 
 test-suite jobrunner
+  import: aeson-shim
   type: exitcode-stdio-1.0
   main-is: Test.hs
   other-modules:
@@ -222,7 +232,6 @@ test-suite jobrunner
   default-extensions: NamedFieldPuns LambdaCase TemplateHaskell ScopedTypeVariables GeneralizedNewtypeDeriving QuasiQuotes OverloadedStrings
   ghc-options: -Wall -fno-warn-orphans -fno-warn-unused-imports -fno-warn-dodgy-exports -Werror=missing-fields -Werror=incomplete-patterns -threaded -with-rtsopts=-N -main-is Test
   build-depends:
-      aeson
     , base >=4.7 && <5
     , bytestring
     , containers
