@@ -1,4 +1,6 @@
 stack.yaml.lock
 test.log
 TAGS
+*.cabal
 .stack-work/
+dist-newstyle/
