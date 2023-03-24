@@ -1,5 +1,6 @@
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module OddJobs.ConfigBuilder where
 
@@ -8,6 +9,7 @@ import Database.PostgreSQL.Simple as PGS
 import Data.Pool
 import Control.Monad.Logger (LogLevel(..), LogStr, toLogStr)
 import Control.Monad.Trans.Control (MonadBaseControl)
+import Data.Aeson.Shim (bwd)
 import Data.Text (Text)
 import Lucid (Html, toHtml, class_, div_, span_, br_, button_, a_, href_, onclick_)
 import Data.Maybe (fromMaybe)
@@ -151,14 +153,14 @@ defaultErrorToHtml e =
 
 defaultJobContent :: Value -> Value
 defaultJobContent v = case v of
-  Aeson.Object o -> case HM.lookup "contents" o of
+  Aeson.Object (bwd -> o) -> case HM.lookup "contents" o of
     Nothing -> v
     Just c -> c
   _ -> v
 
 defaultPayloadToHtml :: Value -> Html ()
 defaultPayloadToHtml v = case v of
-  Aeson.Object o -> do
+  Aeson.Object (bwd -> o) -> do
     toHtml ("{ " :: Text)
     forM_ (HM.toList o) $ \(k, v2) -> do
       span_ [ class_ " key-value-pair " ] $ do
@@ -223,7 +225,7 @@ defaultDynamicJobTypes tname jobTypeSql = AJTSql $ \conn -> do
 defaultJobType :: Job -> Text
 defaultJobType Job{jobPayload} =
   case jobPayload of
-    Aeson.Object hm -> case HM.lookup "tag" hm of
+    Aeson.Object (bwd -> hm) -> case HM.lookup "tag" hm of
       Just (Aeson.String t) -> t
       _ -> "unknown"
     _ -> "unknown"
