@@ -134,7 +134,7 @@ defaultStartCommand args@StartArgs{..} startFn = do
 defaultWebUi :: StartArgs
              -> Config
              -> IO ()
-defaultWebUi StartArgs{..} cfg@Config{..} = do
+defaultWebUi StartArgs{..} cfg@Config{} = do
   env <- UI.mkEnv cfg ("/" <>)
   case startWebUiAuth of
     Nothing -> pure ()

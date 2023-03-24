@@ -5,7 +5,6 @@ module OddJobs.Migrations
 where
 
 import Database.PostgreSQL.Simple as PGS
-import Data.Functor (void)
 import OddJobs.Types
 
 createJobTableQuery :: TableName -> Query
@@ -44,6 +43,7 @@ createNotificationTrigger tname = "create or replace function " <> fnName <> "()
 
 
 createJobTable :: Connection -> TableName -> IO ()
-createJobTable conn tname = void $ do
-  PGS.execute_ conn (createJobTableQuery tname)
-  PGS.execute_ conn (createNotificationTrigger tname)
+createJobTable conn tname =
+  mapM_
+    (PGS.execute_ conn . ($ tname))
+    [createJobTableQuery, createNotificationTrigger]
