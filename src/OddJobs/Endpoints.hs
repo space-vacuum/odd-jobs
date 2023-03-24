@@ -53,7 +53,7 @@ data Env = Env
   }
 
 mkEnv :: (MonadIO m) => Config -> (Text -> Text) -> m Env
-mkEnv cfg@Config{..} linksFn = do
+mkEnv cfg@Config{} linksFn = do
   allJobTypes <- fetchAllJobTypes cfg
   allJobRunners <- fetchAllJobRunners cfg
   envJobTypesRef <- newIORef allJobTypes
@@ -112,7 +112,7 @@ server2 cfg env = Routes
 refreshJobRunners :: Config
                   -> Env
                   -> Handler NoContent
-refreshJobRunners cfg@Config{..} Env{envRoutes=Web.Routes{..}, envJobRunnersRef} = do
+refreshJobRunners cfg@Config{} Env{envRoutes=Web.Routes{..}, envJobRunnersRef} = do
   allJobRunners <- fetchAllJobRunners cfg
   atomicModifyIORef' envJobRunnersRef (\_ -> (allJobRunners, ()))
   throwError $ err302{errHeaders=[("Location", toS $ rFilterResults Nothing)]}

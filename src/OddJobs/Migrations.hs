@@ -5,8 +5,6 @@ module OddJobs.Migrations
 where
 
 import Database.PostgreSQL.Simple as PGS
-import Database.PostgreSQL.Simple.Types as PGS
-import Data.Functor (void)
 import OddJobs.Types
 
 createJobTableQuery :: Query
@@ -39,34 +37,14 @@ createNotificationTrigger = "create or replace function ?() returns trigger as $
   "  return new; \n" <>
   "end; \n" <>
   "$$ language plpgsql;" <>
-  "create trigger ? after insert on ? for each row execute procedure ?();"
+  "create trigger " <> trgName <> " after insert on " <> tname <> " for each row execute procedure " <> fnName <> "();"
+  where
+    fnName = "notify_job_monitor_for_" <> tname
+    trgName = "trg_notify_job_monitor_for_" <> tname
+
 
 createJobTable :: Connection -> TableName -> IO ()
-createJobTable conn tname = void $ do
-  let tnameTxt = getTnameTxt tname
-  PGS.execute conn createJobTableQuery
-    ( tname
-    , PGS.Identifier $ "idx_" <> tnameTxt <> "_created_at"
-    , tname
-    , PGS.Identifier $ "idx_" <> tnameTxt <> "_updated_at"
-    , tname
-    , PGS.Identifier $ "idx_" <> tnameTxt <> "_locked_at"
-    , tname
-    , PGS.Identifier $ "idx_" <> tnameTxt <> "_locked_by"
-    , tname
-    , PGS.Identifier $ "idx_" <> tnameTxt <> "_status"
-    , tname
-    , PGS.Identifier $ "idx_" <> tnameTxt <> "_run_at"
-    , tname
-    )
-  PGS.execute conn createNotificationTrigger
-    ( fnName
-    , pgEventName tname
-    , trgName
-    , tname
-    , fnName
-    )
-  where
-    fnName = PGS.Identifier $ "notify_job_monitor_for_" <> (getTnameTxt tname)
-    trgName = PGS.Identifier $ "trg_notify_job_monitor_for_" <> (getTnameTxt tname)
-    getTnameTxt (PGS.QualifiedIdentifier _ tname') = tname'
+createJobTable conn tname =
+  mapM_
+    (PGS.execute_ conn . ($ tname))
+    [createJobTableQuery, createNotificationTrigger]
