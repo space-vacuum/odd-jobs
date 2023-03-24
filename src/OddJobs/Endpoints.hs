@@ -8,41 +8,20 @@ module OddJobs.Endpoints where
 import OddJobs.Web as Web hiding (Routes(..))
 import qualified OddJobs.Web as Web
 import OddJobs.Job as Job
-import OddJobs.Types
 import GHC.Generics
 
 import Servant
-import Servant.API.Generic
 import Servant.Server.Generic
 
 import Servant.HTML.Lucid
 import Lucid
-import Lucid.Html5
-import Lucid.Base
 import Data.Text as T
-import Network.Wai.Handler.Warp   (run)
-import Servant.Server.StaticFiles (serveDirectoryFileServer)
 import UnliftIO hiding (Handler)
-import Database.PostgreSQL.Simple as PGS
 import Control.Monad.Reader
 import Data.String.Conv (toS)
-import Control.Monad.Except
 import Data.Time as Time
-import Data.Aeson as Aeson
-import qualified Data.HashMap.Strict as HM
-import GHC.Exts (toList)
-import Data.Maybe (fromMaybe, mapMaybe)
-import Control.Applicative ((<|>))
--- import qualified OddJobs.Links as Links
-import Data.List ((\\))
-import qualified System.Log.FastLogger as FLogger
-import qualified System.Log.FastLogger.Date as FLogger
-import Control.Monad.Logger as MLogger
-import qualified Data.ByteString.Lazy as BSL
+import Data.Maybe (fromMaybe)
 import qualified Data.List as DL
-import UnliftIO.IORef
-import Debug.Trace
-import qualified OddJobs.ConfigBuilder as Builder
 import Servant.Static.TH (createApiAndServerDecs)
 
 -- startApp :: IO ()

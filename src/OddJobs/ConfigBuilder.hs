@@ -8,10 +8,9 @@ import OddJobs.Types
 import Database.PostgreSQL.Simple as PGS
 import Data.Pool
 import Control.Monad.Logger (LogLevel(..), LogStr, toLogStr)
-import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Aeson.Shim (bwd)
 import Data.Text (Text)
-import Lucid (Html, toHtml, class_, div_, span_, br_, button_, a_, href_, onclick_)
+import Lucid (Html, toHtml, class_, div_, span_, br_, a_, href_, onclick_)
 import Data.Maybe (fromMaybe)
 import Data.List as DL
 import Data.Aeson as Aeson hiding (Success)

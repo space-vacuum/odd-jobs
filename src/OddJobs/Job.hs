@@ -1,6 +1,13 @@
-{-# LANGUAGE RankNTypes, FlexibleInstances, FlexibleContexts, PartialTypeSignatures, TupleSections, DeriveGeneric, UndecidableInstances #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE CPP #-}
 
 module OddJobs.Job
   (
@@ -73,48 +80,39 @@ module OddJobs.Job
   )
 where
 
+import Prelude hiding (log)
 import OddJobs.Types
 import Data.Text as T
 import Database.PostgreSQL.Simple as PGS
 import Database.PostgreSQL.Simple.Notification
 import UnliftIO.Async
-import UnliftIO.Concurrent (threadDelay, myThreadId)
-import Data.Pool (withResource)
+import UnliftIO.Concurrent (myThreadId)
 import Data.String
 import System.Posix.Process (getProcessID)
 import Network.HostName (getHostName)
-import UnliftIO.MVar
-import Debug.Trace
-import Control.Monad.Logger as MLogger (LogLevel(..), LogStr, toLogStr)
+import Control.Monad.Logger as MLogger (LogLevel(..))
 import UnliftIO.IORef
-import UnliftIO.Exception ( SomeException(..), try, catch, finally
-                          , catchAny, bracket, Exception(..), throwIO
+import UnliftIO.Exception ( SomeException(..), finally
+                          , catchAny, Exception(..), throwIO
                           , catches, Handler(..), mask_, throwString
                           )
-import Data.Proxy
 import Control.Monad.Trans.Control
-import Control.Monad.IO.Unlift (MonadUnliftIO, withRunInIO, liftIO)
-import Data.Text.Conversions
+import Control.Monad.IO.Unlift (MonadUnliftIO, withRunInIO)
 import Data.Time
 import Data.Aeson hiding (Success)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as Aeson (Parser, parseMaybe)
-import Data.String.Conv (StringConv(..), toS)
-import Data.Functor (void)
-import Control.Monad (forever)
-import Data.Maybe (isNothing, maybe, fromMaybe, listToMaybe, mapMaybe)
-import Data.Either (either)
+import Data.String.Conv (toS)
+import Data.Maybe (isNothing, listToMaybe, mapMaybe)
 import Control.Monad.Reader
-import GHC.Generics
-import qualified Data.HashMap.Strict as HM
 import qualified Data.List as DL
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as BSL
-import System.FilePath (FilePath)
 import qualified System.Directory as Dir
+
+#if MIN_VERSION_aeson(2,0,0)
+import Data.Aeson.Types (iparse, IResult(..), formatError)
+#else
 import Data.Aeson.Internal (iparse, IResult(..), formatError)
-import Prelude hiding (log)
-import GHC.Exts (toList)
+#endif
 import Database.PostgreSQL.Simple.Types as PGS (Identifier(..))
 import Database.PostgreSQL.Simple.ToField as PGS (toField)
 

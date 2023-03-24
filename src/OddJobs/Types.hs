@@ -10,7 +10,6 @@ import Database.PostgreSQL.Simple as PGS
 import Database.PostgreSQL.Simple.Types as PGS
 import UnliftIO (MonadIO)
 import UnliftIO.Concurrent (threadDelay)
-import Data.Pool (Pool)
 import Data.Text.Conversions
 import Database.PostgreSQL.Simple.FromField as FromField
 import Database.PostgreSQL.Simple.ToField as ToField
@@ -21,9 +20,8 @@ import Data.Text (Text)
 import GHC.Generics
 import Data.Aeson as Aeson hiding (Success)
 import Data.String.Conv
-import Lucid (Html(..))
+import Lucid (Html)
 import Control.Monad.Logger (LogLevel)
-import Control.Monad.Trans.Control (MonadBaseControl)
 
 
 -- | An alias for 'QualifiedIdentifier' type. It is used for the job table name.

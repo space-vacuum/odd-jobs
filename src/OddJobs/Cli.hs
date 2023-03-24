@@ -8,7 +8,6 @@ import Options.Applicative as Opts
 import Data.Text
 import OddJobs.Job (startJobRunner, Config(..))
 import System.Daemonize (DaemonOptions(..), daemonize)
-import System.FilePath (FilePath)
 import System.Posix.Process (getProcessID)
 import qualified System.Directory as Dir
 import qualified System.Exit as Exit
@@ -22,7 +21,6 @@ import Servant.API
 import Data.Proxy
 import Data.Text.Encoding (decodeUtf8)
 import Network.Wai.Handler.Warp as Warp
-import Debug.Trace
 
 -- * Introduction
 --

@@ -71,7 +71,7 @@ library
   hs-source-dirs:
       src
   default-extensions: NamedFieldPuns LambdaCase TemplateHaskell ScopedTypeVariables GeneralizedNewtypeDeriving QuasiQuotes OverloadedStrings
-  ghc-options: -Wall -fno-warn-orphans -fno-warn-unused-imports -fno-warn-dodgy-exports -Werror=missing-fields -Werror=incomplete-patterns
+  ghc-options: -Wall -Werror=missing-fields
   build-depends:
       base >=4.7 && <5
     , bytestring

@@ -12,32 +12,24 @@ import OddJobs.Types
 import OddJobs.Job as Job
 import Data.Time
 import Data.Aeson as Aeson
-import qualified Data.Text as T
 import Data.Aeson.Shim (bwd)
 import Data.Text (Text)
 import GHC.Generics hiding (from, to)
 import Database.PostgreSQL.Simple as PGS
 import Database.PostgreSQL.Simple.ToRow as PGS
 import Database.PostgreSQL.Simple.ToField as PGS
-import Data.Pool as Pool
-import UnliftIO
 import Data.Maybe
 import Data.String (fromString)
 import Control.Applicative ((<|>))
-import Data.List (nub)
 import Servant
-import Servant.API.Generic
-import Servant.HTML.Lucid
 import Lucid
-import Lucid.Html5
 import Lucid.Base
 import Data.String.Conv
 import qualified Data.HashMap.Strict as HM
 import Data.List as DL hiding (filter, and)
 import Control.Monad
 import Data.Time.Format.Human (humanReadableTime')
-import Data.Time.Convenience (timeSince, Unit(..), Direction(..))
-import Data.Text.Conversions (fromText, toText)
+import Data.Text.Conversions (toText)
 import Prelude hiding (filter, and)
 
 data OrderDirection = Asc | Desc deriving (Eq, Show, Generic, Enum)
