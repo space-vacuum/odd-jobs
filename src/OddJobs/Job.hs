@@ -108,7 +108,7 @@ import Control.Monad.Reader
 import qualified Data.List as DL
 import qualified System.Directory as Dir
 
-#if MIN_VERSION_aeson(2,0,0)
+#if MIN_VERSION_aeson(2,1,0)
 import Data.Aeson.Types (iparse, IResult(..), formatError)
 #else
 import Data.Aeson.Internal (iparse, IResult(..), formatError)

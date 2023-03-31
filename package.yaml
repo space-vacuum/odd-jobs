@@ -12,7 +12,7 @@ description: |
   - Highly configurable and monitorable
 homepage:            https://www.haskelltutorials.com/odd-jobs
 bug-reports:         https://github.com/saurabhnanda/odd-jobs/issues
-license:             BSD3
+license:             BSD-3-Clause
 author:              Saurabh Nanda
 maintainer:          saurabhnanda@gmail.com
 copyright:           2016-2020 Saurabh Nanda
@@ -102,6 +102,8 @@ library:
     - OddJobs.Cli
     - OddJobs.Types
     - OddJobs.ConfigBuilder
+  other-modules:
+    - Data.Aeson.Shim
 
 executables:
   devel:
