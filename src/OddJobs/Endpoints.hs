@@ -1,5 +1,12 @@
-{-# LANGUAGE TypeOperators, DeriveGeneric, NamedFieldPuns, DataKinds, StandaloneDeriving, FlexibleContexts, RecordWildCards, RankNTypes #-}
-
+{-# LANGUAGE CPP #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeOperators #-}
 
 -- | TODO: Rename this to OddJobs.Servant
 
@@ -10,8 +17,17 @@ import qualified OddJobs.Web as Web
 import OddJobs.Job as Job
 import GHC.Generics
 
+#if MIN_VERSION_servant(0,19,0)
+import Servant (AsLink, Handler, ServerT, allFieldLinks', err301, err302, errHeaders, linkURI, throwError)
+import Servant.API (AsApi, Capture, Get, NoContent, Post, QueryParam, ToServant, toServant, (:-), (:<|>) (..), (:>))
+#else
 import Servant
-import Servant.Server.Generic
+  ( AsLink, Capture, Get, Handler, NoContent, Post, QueryParam, ServerT
+  , allFieldLinks', err301, err302, errHeaders, linkURI, throwError, (:<|>) (..), (:>)
+  )
+import Servant.API.Generic (AsApi, ToServant, toServant, (:-))
+#endif
+import Servant.Server.Generic (AsServer, AsServerT)
 
 import Servant.HTML.Lucid
 import Lucid

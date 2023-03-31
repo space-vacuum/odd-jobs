@@ -1,10 +1,8 @@
-cabal-version: 3.0
+cabal-version: 2.2
 
--- This file has been generated from package.yaml by hpack version 0.33.0.
+-- This file has been generated from package.yaml by hpack version 0.35.1.
 --
 -- see: https://github.com/sol/hpack
---
--- hash: 6677b61240c930d793f07c90cd9dc719586179d99bdc7dc7b3dbe9a32d9a2afa
 
 name:           odd-jobs
 version:        0.2.2
@@ -47,15 +45,7 @@ extra-source-files:
     assets/js/logo-slider.js
     assets/odd-jobs-color-logo.png
 
-common aeson-shim
-  if impl(ghc <9)
-    build-depends: aeson <1.6
-
-  else
-    build-depends: aeson >=2
-
 library
-  import: aeson-shim
   exposed-modules:
       OddJobs.Job
       OddJobs.Migrations
@@ -65,15 +55,21 @@ library
       OddJobs.Types
       OddJobs.ConfigBuilder
   other-modules:
-      UI
       Data.Aeson.Shim
-      Paths_odd_jobs
   hs-source-dirs:
       src
-  default-extensions: NamedFieldPuns LambdaCase TemplateHaskell ScopedTypeVariables GeneralizedNewtypeDeriving QuasiQuotes OverloadedStrings
-  ghc-options: -Wall -Werror=missing-fields
+  default-extensions:
+      NamedFieldPuns
+      LambdaCase
+      TemplateHaskell
+      ScopedTypeVariables
+      GeneralizedNewtypeDeriving
+      QuasiQuotes
+      OverloadedStrings
+  ghc-options: -Wall -fno-warn-orphans -fno-warn-unused-imports -fno-warn-dodgy-exports -Werror=missing-fields
   build-depends:
-      base >=4.7 && <5
+      aeson
+    , base >=4.7 && <5
     , bytestring
     , direct-daemonize
     , directory
@@ -106,13 +102,12 @@ library
     , unordered-containers
     , wai
     , warp
-
   default-language: Haskell2010
 
 executable devel
-  import: aeson-shim
   main-is: DevelMain.hs
   other-modules:
+      Data.Aeson.Shim
       OddJobs.Cli
       OddJobs.ConfigBuilder
       OddJobs.Endpoints
@@ -122,13 +117,23 @@ executable devel
       OddJobs.Web
       UI
       Paths_odd_jobs
+  autogen-modules:
+      Paths_odd_jobs
   hs-source-dirs:
       dev
       src
-  default-extensions: NamedFieldPuns LambdaCase TemplateHaskell ScopedTypeVariables GeneralizedNewtypeDeriving QuasiQuotes OverloadedStrings
-  ghc-options: -Wall -fno-warn-orphans -fno-warn-unused-imports -fno-warn-dodgy-exports -Werror=missing-fields -Werror=incomplete-patterns -threaded -with-rtsopts=-N -main-is DevelMain
+  default-extensions:
+      NamedFieldPuns
+      LambdaCase
+      TemplateHaskell
+      ScopedTypeVariables
+      GeneralizedNewtypeDeriving
+      QuasiQuotes
+      OverloadedStrings
+  ghc-options: -Wall -fno-warn-orphans -fno-warn-unused-imports -fno-warn-dodgy-exports -Werror=missing-fields -threaded -with-rtsopts=-N -main-is DevelMain
   build-depends:
-      base >=4.7 && <5
+      aeson
+    , base >=4.7 && <5
     , bytestring
     , direct-daemonize
     , directory
@@ -166,15 +171,24 @@ executable devel
   default-language: Haskell2010
 
 executable odd-jobs-cli-example
-  import: aeson-shim
   main-is: OddJobsCliExample.lhs
   other-modules:
       Paths_odd_jobs
+  autogen-modules:
+      Paths_odd_jobs
   hs-source-dirs:
       examples
-  default-extensions: NamedFieldPuns LambdaCase TemplateHaskell ScopedTypeVariables GeneralizedNewtypeDeriving QuasiQuotes OverloadedStrings
-  ghc-options: -Wall -fno-warn-orphans -fno-warn-unused-imports -fno-warn-dodgy-exports -Werror=missing-fields -Werror=incomplete-patterns -threaded -with-rtsopts=-N -main-is OddJobsCliExample
+  default-extensions:
+      NamedFieldPuns
+      LambdaCase
+      TemplateHaskell
+      ScopedTypeVariables
+      GeneralizedNewtypeDeriving
+      QuasiQuotes
+      OverloadedStrings
+  ghc-options: -Wall -fno-warn-orphans -fno-warn-unused-imports -fno-warn-dodgy-exports -Werror=missing-fields -threaded -with-rtsopts=-N -main-is OddJobsCliExample
   build-depends:
+      aeson
     , base >=4.7 && <5
     , bytestring
     , direct-daemonize
@@ -212,26 +226,28 @@ executable odd-jobs-cli-example
   default-language: Haskell2010
 
 test-suite jobrunner
-  import: aeson-shim
   type: exitcode-stdio-1.0
   main-is: Test.hs
   other-modules:
       CliParser
-      OddJobs.Cli
-      OddJobs.ConfigBuilder
-      OddJobs.Endpoints
-      OddJobs.Job
-      OddJobs.Migrations
-      OddJobs.Types
-      OddJobs.Web
-      UI
+      Try
+      Try2
+      Paths_odd_jobs
+  autogen-modules:
       Paths_odd_jobs
   hs-source-dirs:
       test
-      src
-  default-extensions: NamedFieldPuns LambdaCase TemplateHaskell ScopedTypeVariables GeneralizedNewtypeDeriving QuasiQuotes OverloadedStrings
-  ghc-options: -Wall -fno-warn-orphans -fno-warn-unused-imports -fno-warn-dodgy-exports -Werror=missing-fields -Werror=incomplete-patterns -threaded -with-rtsopts=-N -main-is Test
+  default-extensions:
+      NamedFieldPuns
+      LambdaCase
+      TemplateHaskell
+      ScopedTypeVariables
+      GeneralizedNewtypeDeriving
+      QuasiQuotes
+      OverloadedStrings
+  ghc-options: -Wall -fno-warn-orphans -fno-warn-unused-imports -fno-warn-dodgy-exports -Werror=missing-fields -threaded -with-rtsopts=-N -main-is Test
   build-depends:
+      aeson
     , base >=4.7 && <5
     , bytestring
     , containers
